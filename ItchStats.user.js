@@ -5,6 +5,8 @@
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
+// @author       Nnican
+// @license      MIT
 // @grant        none
 // ==/UserScript==
 
@@ -32,6 +34,7 @@
   const STORAGE_KEY_POSITIONS = 'tm_itch_game_positions_v4';
   const STORAGE_KEY_GAME_META = 'tm_itch_game_meta_v4';
   const STORAGE_KEY_SUMMARY_SECTIONS = 'tm_itch_summary_sections_v1';
+  const STORAGE_KEY_SUMMARY_COLLAPSED = 'tm_itch_summary_collapsed_v1';
   const STORAGE_KEY_SUMMARY_SERIES = 'tm_itch_summary_series_v1';
   const STORAGE_KEY_SUMMARY_CHART_PREFS = 'tm_itch_summary_chart_prefs_v1';
   const STORAGE_KEY_INTERSECTIONS = 'tm_itch_summary_intersections_v1';
@@ -303,7 +306,8 @@
       padding: 12px;
     }
 
-    #tm-itch-collapse {
+    #tm-itch-collapse,
+    .tm-widget-collapse {
       width: 28px;
       height: 28px;
       border: 0;
@@ -5113,6 +5117,7 @@
     widget.innerHTML = `
       <div class="tm-widget-head">
         <div class="tm-widget-title">Summary Stats</div>
+        <button class="tm-widget-collapse" id="tm-summary-collapse" type="button" title="Свернуть">-</button>
       </div>
       <div class="tm-summary-root-body tm-widget-scroll-body">
         <div class="tm-series-toolbar">
@@ -5189,6 +5194,27 @@
       mountPoint.parent.appendChild(widget);
     }
     showSummaryReminder();
+
+    const rootBody = widget.querySelector('.tm-summary-root-body');
+    const collapseButton = widget.querySelector('#tm-summary-collapse');
+
+    function setSummaryCollapsed(collapsed, persist = true) {
+      if (!rootBody || !collapseButton) return;
+      rootBody.classList.toggle('tm-hidden', collapsed);
+      collapseButton.textContent = collapsed ? '+' : '-';
+      collapseButton.title = collapsed ? 'Развернуть' : 'Свернуть';
+      collapseButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      if (persist) {
+        localStorage.setItem(STORAGE_KEY_SUMMARY_COLLAPSED, collapsed ? '1' : '0');
+      }
+    }
+
+    collapseButton?.addEventListener('click', () => {
+      const isCollapsed = rootBody?.classList.contains('tm-hidden');
+      setSummaryCollapsed(!isCollapsed);
+    });
+
+    setSummaryCollapsed(localStorage.getItem(STORAGE_KEY_SUMMARY_COLLAPSED) === '1', false);
 
     widget.querySelectorAll('[data-chart-root]').forEach(root => {
       const chartKey = root.getAttribute('data-chart-root');
