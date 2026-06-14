@@ -1,13 +1,15 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      4.3
+// @version      5.0
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
 // @author       Nnican
 // @license      MIT
 // @grant        none
+// @downloadURL  https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
+// @icon         https://itch.io/favicon.ico
 // ==/UserScript==
 
 (function () {
@@ -966,9 +968,31 @@
 
     .tm-stat-chart-line {
       fill: none;
-      stroke-width: 2;
+      stroke-width: 3;
       stroke-linecap: round;
       stroke-linejoin: round;
+      filter: drop-shadow(0 0 6px rgba(255,255,255,.1));
+    }
+
+    .tm-stat-chart-line-bg {
+      fill: none;
+      stroke-width: 1.25;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: .28;
+    }
+
+    .tm-stat-chart-trend {
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: .85;
+      stroke-dasharray: 5 4;
+    }
+
+    .tm-stat-chart-trend-ma {
+      stroke-dasharray: 3 4;
     }
 
     .tm-stat-chart-point {
@@ -1047,6 +1071,7 @@
       flex-wrap: wrap;
       gap: 6px;
       margin-top: 8px;
+      align-items: center;
     }
 
     .tm-stat-chart-legend-item {
@@ -1072,6 +1097,25 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .tm-stat-chart-trend-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08);
+      font-size: 11px;
+      color: rgba(255,255,255,.82);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .tm-stat-chart-trend-control input {
+      margin: 0;
+      accent-color: #d36d6d;
     }
 
     .tm-action-row {
@@ -1361,12 +1405,25 @@
     localStorage.setItem(STORAGE_KEY_SUMMARY_CHART_PREFS, JSON.stringify(data || {}));
   }
 
+  function normalizeSummaryChartDuration(value) {
+    const duration = Number(value);
+    return duration === 30 ? 30 : duration === 7 ? 7 : 1;
+  }
+
+  function normalizeSummaryChartTrends(trends) {
+    return {
+      linear: !!trends?.linear,
+      ma: !!trends?.ma
+    };
+  }
+
   function getSummaryChartPref(chartKey, visibleModes = []) {
     const allPrefs = loadSummaryChartPrefs();
     const pref = allPrefs?.[chartKey];
     const mode = visibleModes.includes(pref?.mode) ? pref.mode : (visibleModes[0] || '');
-    const duration = pref?.duration === 7 ? 7 : 1;
-    return { mode, duration };
+    const duration = normalizeSummaryChartDuration(pref?.duration);
+    const trends = normalizeSummaryChartTrends(pref?.trends);
+    return { mode, duration, trends };
   }
 
   function setSummaryChartPref(chartKey, pref) {
@@ -1375,7 +1432,8 @@
     const allPrefs = loadSummaryChartPrefs();
     allPrefs[chartKey] = {
       mode: String(pref?.mode || ''),
-      duration: Number(pref?.duration) === 7 ? 7 : 1
+      duration: normalizeSummaryChartDuration(pref?.duration),
+      trends: normalizeSummaryChartTrends(pref?.trends)
     };
     saveSummaryChartPrefs(allPrefs);
   }
@@ -4154,16 +4212,168 @@
     };
   }
 
-  function buildChartPath(points, getX, getY) {
-    let path = '';
+  function getChartCoordinates(points, getX, getY) {
+    return points.reduce((acc, point, index) => {
+      if (!point) return acc;
+      acc.push({
+        index,
+        value: point.value,
+        x: getX(index),
+        y: getY(point.value),
+        point
+      });
+      return acc;
+    }, []);
+  }
 
-    points.forEach((point, index) => {
-      if (!point) return;
-      const command = (!path || !points[index - 1]) ? 'M' : 'L';
-      path += `${command}${getX(index)} ${getY(point.value)} `;
+  function buildNeighborSegmentsPath(points, getX, getY) {
+    const coords = getChartCoordinates(points, getX, getY);
+    if (coords.length < 2) return '';
+
+    let path = `M${coords[0].x} ${coords[0].y}`;
+    for (let index = 1; index < coords.length; index += 1) {
+      path += ` L${coords[index].x} ${coords[index].y}`;
+    }
+
+    return path;
+  }
+
+  function buildSmoothBezierPath(points, getX, getY) {
+    const coords = getChartCoordinates(points, getX, getY);
+    if (coords.length < 2) return '';
+    if (coords.length === 2) {
+      return `M${coords[0].x} ${coords[0].y} L${coords[1].x} ${coords[1].y}`;
+    }
+
+    let path = `M${coords[0].x} ${coords[0].y}`;
+
+    for (let index = 0; index < coords.length - 1; index += 1) {
+      const p0 = coords[index - 1] || coords[index];
+      const p1 = coords[index];
+      const p2 = coords[index + 1];
+      const p3 = coords[index + 2] || p2;
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      path += ` C${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+    }
+
+    return path;
+  }
+
+  function buildLinearTrendPath(points, getX, getY) {
+    const coords = getChartCoordinates(points, getX, getY);
+    if (coords.length < 2) return '';
+
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+
+    coords.forEach(coord => {
+      sumX += coord.index;
+      sumY += coord.value;
+      sumXY += coord.index * coord.value;
+      sumXX += coord.index * coord.index;
     });
 
-    return path.trim();
+    const count = coords.length;
+    const denominator = count * sumXX - sumX * sumX;
+    const slope = denominator ? ((count * sumXY) - (sumX * sumY)) / denominator : 0;
+    const intercept = count ? (sumY - slope * sumX) / count : 0;
+    const startIndex = 0;
+    const endIndex = Math.max(...points.map((_, index) => index));
+    const startValue = intercept + slope * startIndex;
+    const endValue = intercept + slope * endIndex;
+
+    return `M${getX(startIndex)} ${getY(startValue)} L${getX(endIndex)} ${getY(endValue)}`;
+  }
+
+  function buildMovingAverageTrendPoints(points, windowSize) {
+    const validPoints = points.reduce((acc, point, index) => {
+      if (!point) return acc;
+      acc.push({ index, value: point.value });
+      return acc;
+    }, []);
+
+    if (validPoints.length < 2) return [];
+
+    return validPoints.map((item, index) => {
+      const slice = validPoints.slice(Math.max(0, index - windowSize + 1), index + 1);
+      const average = slice.reduce((sum, point) => sum + point.value, 0) / slice.length;
+      return {
+        index: item.index,
+        value: average
+      };
+    });
+  }
+
+  function buildTrendPaths(points, getX, getY, durationDays, trends) {
+    const trendState = normalizeSummaryChartTrends(trends);
+    const movingAverageWindow = durationDays === 1 ? 3 : 5;
+    const result = [];
+
+    if (trendState.linear) {
+      const linearPath = buildLinearTrendPath(points, getX, getY);
+      if (linearPath) {
+        result.push({
+          kind: 'linear',
+          path: linearPath
+        });
+      }
+    }
+
+    if (trendState.ma) {
+      const movingAveragePoints = buildMovingAverageTrendPoints(points, movingAverageWindow);
+      if (movingAveragePoints.length >= 2) {
+        let path = `M${getX(movingAveragePoints[0].index)} ${getY(movingAveragePoints[0].value)}`;
+        for (let index = 1; index < movingAveragePoints.length; index += 1) {
+          const point = movingAveragePoints[index];
+          path += ` L${getX(point.index)} ${getY(point.value)}`;
+        }
+        result.push({
+          kind: 'ma',
+          path
+        });
+      }
+    }
+
+    return result;
+  }
+
+  function buildSeriesChartMarkup(series, options) {
+    const {
+      getX,
+      getY,
+      durationDays = 7,
+      showTrends = false,
+      trendState = null,
+      palette = []
+    } = options || {};
+
+    return series.map((item, index) => {
+      const color = item.color || palette[index % palette.length] || '#4A8CFF';
+      const backgroundPath = buildNeighborSegmentsPath(item.points, getX, getY);
+      const smoothPath = buildSmoothBezierPath(item.points, getX, getY);
+      const trendPaths = showTrends ? buildTrendPaths(item.points, getX, getY, durationDays, trendState) : [];
+      const circles = item.points.map((point, pointIndex) => {
+        if (!point) return '';
+        const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
+        return `
+          <circle class="tm-stat-chart-point" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
+            <title>${escapeHtml(title)}</title>
+          </circle>
+        `;
+      }).join('');
+
+      return `
+        ${backgroundPath ? `<path class="tm-stat-chart-line-bg" d="${backgroundPath}" stroke="${color}"></path>` : ''}
+        ${trendPaths.map(trend => `<path class="tm-stat-chart-trend ${trend.kind === 'ma' ? 'tm-stat-chart-trend-ma' : ''}" d="${trend.path}" stroke="${color}"></path>`).join('')}
+        ${smoothPath ? `<path class="tm-stat-chart-line" d="${smoothPath}" stroke="${color}"></path>` : ''}
+        ${circles}
+      `;
+    }).join('');
   }
 
   function renderSectionChart(chartData, options = {}) {
@@ -4218,24 +4428,12 @@
       <text class="tm-stat-chart-day" x="${getX(index)}" y="${height - 8}" text-anchor="middle">${escapeHtml(day.label)}</text>
     `).join('');
 
-    const lineMarkup = series.map((item, index) => {
-      const color = palette[index % palette.length];
-      const path = buildChartPath(item.points, getX, getY);
-      const circles = item.points.map((point, pointIndex) => {
-        if (!point) return '';
-        const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
-        return `
-          <circle class="tm-stat-chart-point" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
-            <title>${escapeHtml(title)}</title>
-          </circle>
-        `;
-      }).join('');
-
-      return `
-        ${path ? `<path class="tm-stat-chart-line" d="${path}" stroke="${color}"></path>` : ''}
-        ${circles}
-      `;
-    }).join('');
+    const lineMarkup = buildSeriesChartMarkup(series, {
+      getX,
+      getY,
+      durationDays: Math.max(1, days.length),
+      palette
+    });
 
     const legendMarkup = series.map((item, index) => {
       const color = palette[index % palette.length];
@@ -4344,7 +4542,8 @@
     return {
       durations: {
         1: buildDuration(1),
-        7: buildDuration(7)
+        7: buildDuration(7),
+        30: buildDuration(30)
       }
     };
   }
@@ -4363,7 +4562,7 @@
             </div>
             <div class="tm-stat-chart-head-right">
               <div class="tm-stat-chart-toggle">
-                ${[1, 7].map((duration, index) => `
+                ${[1, 7, 30].map((duration, index) => `
                   <button class="tm-stat-chart-toggle-button ${index === 0 ? 'tm-active' : ''}" type="button" data-chart-duration="${duration}">${duration}d</button>
                 `).join('')}
               </div>
@@ -4380,11 +4579,14 @@
   function renderSectionToggleChartInto(root, chartData, mode = 'popular', durationDays = 1) {
     if (!root) return;
 
+    const chartKey = root.getAttribute('data-chart-root') || '';
     const body = root.querySelector('.tm-stat-chart-body');
     const title = root.querySelector('.tm-stat-chart-title');
     const tooltip = root.querySelector('.tm-stat-chart-tooltip');
     const durationLabel = `${durationDays}d`;
     const modeLabel = isKnownSeriesKey(mode) ? getSeriesLabel(mode) : 'Section not selected';
+    const chartPref = getSummaryChartPref(chartKey, Object.keys(chartData?.durations?.[durationDays]?.modes || chartData?.durations?.[1]?.modes || {}));
+    const trendState = normalizeSummaryChartTrends(chartPref.trends);
     const durationData = chartData?.durations?.[durationDays] || chartData?.durations?.[1] || null;
     const days = Array.isArray(durationData?.days) ? durationData.days : [];
     const series = Array.isArray(durationData?.modes?.[mode]) ? durationData.modes[mode] : [];
@@ -4436,13 +4638,13 @@
       <text class="tm-stat-chart-day" x="${getX(index)}" y="${height - 8}" text-anchor="middle">${escapeHtml(day.label)}</text>
     `).join('');
 
-    const lineMarkup = series.map(item => `
-      ${buildChartPath(item.points, getX, getY) ? `<path class="tm-stat-chart-line" d="${buildChartPath(item.points, getX, getY)}" stroke="${item.color}"></path>` : ''}
-      ${item.points.map((point, pointIndex) => {
-        if (!point) return '';
-        return `<circle class="tm-stat-chart-point" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${item.color}"></circle>`;
-      }).join('')}
-    `).join('');
+    const lineMarkup = buildSeriesChartMarkup(series, {
+      getX,
+      getY,
+      durationDays,
+      showTrends: true,
+      trendState
+    });
 
     const hoverZones = days.map((day, index) => {
       const prevX = index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2;
@@ -4456,6 +4658,16 @@
         <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
       </div>
     `).join('');
+    const trendControlsMarkup = `
+      <label class="tm-stat-chart-trend-control">
+        <input type="checkbox" data-chart-trend="linear" ${trendState.linear ? 'checked' : ''}>
+        <span>Trend: Linear</span>
+      </label>
+      <label class="tm-stat-chart-trend-control">
+        <input type="checkbox" data-chart-trend="ma" ${trendState.ma ? 'checked' : ''}>
+        <span>Trend: MA</span>
+      </label>
+    `;
 
     body.innerHTML = `
       <svg class="tm-stat-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${modeLabel} ${durationLabel} current ranks chart`)}">
@@ -4466,7 +4678,7 @@
         ${hoverZones}
         ${dayLabels}
       </svg>
-      <div class="tm-stat-chart-legend">${legendMarkup}</div>
+      <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
     `;
 
     const svg = body.querySelector('.tm-stat-chart-svg');
@@ -4528,6 +4740,21 @@
       });
 
       zone.addEventListener('mouseleave', hideTooltip);
+    });
+
+    body.querySelectorAll('[data-chart-trend]').forEach(input => {
+      input.addEventListener('change', () => {
+        const nextTrends = {
+          ...trendState,
+          [input.getAttribute('data-chart-trend') || '']: input.checked
+        };
+        setSummaryChartPref(chartKey, {
+          mode,
+          duration: durationDays,
+          trends: nextTrends
+        });
+        renderSectionToggleChartInto(root, chartData, mode, durationDays);
+      });
     });
 
     body.addEventListener('mouseleave', hideTooltip);
@@ -5242,7 +5469,8 @@
           currentMode = nextMode;
           setSummaryChartPref(chartKey, {
             mode: currentMode,
-            duration: currentDuration
+            duration: currentDuration,
+            trends: getSummaryChartPref(chartKey, visibleSeries).trends
           });
           root.querySelectorAll('[data-chart-mode]').forEach(other => {
             other.classList.toggle('tm-active', other === button);
@@ -5257,7 +5485,8 @@
           currentDuration = nextDuration;
           setSummaryChartPref(chartKey, {
             mode: currentMode,
-            duration: currentDuration
+            duration: currentDuration,
+            trends: getSummaryChartPref(chartKey, visibleSeries).trends
           });
           root.querySelectorAll('[data-chart-duration]').forEach(other => {
             other.classList.toggle('tm-active', other === button);
