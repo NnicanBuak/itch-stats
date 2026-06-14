@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.2
+// @version      5.2.1
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -4246,6 +4246,22 @@
     }, []);
   }
 
+  let chartClipPathSequence = 0;
+
+  function getChartClipPathMarkup(margin, plotWidth, plotHeight) {
+    const id = `tm-stat-chart-clip-${chartClipPathSequence += 1}`;
+    return {
+      id,
+      markup: `
+        <defs>
+          <clipPath id="${id}">
+            <rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}"></rect>
+          </clipPath>
+        </defs>
+      `
+    };
+  }
+
   function buildNeighborSegmentsPath(points, getX, getY) {
     const coords = getChartCoordinates(points, getX, getY);
     if (coords.length < 2) return '';
@@ -4496,6 +4512,7 @@
       durationDays: Math.max(1, days.length),
       palette
     });
+    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight);
 
     const legendMarkup = series.map((item, index) => {
       const color = palette[index % palette.length];
@@ -4510,9 +4527,10 @@
     return `
       <div class="tm-stat-chart">
         <svg class="tm-stat-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Last 7 days current ranks chart">
+          ${clipPath.markup}
           ${gridLines}
           <line class="tm-stat-chart-axis" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}"></line>
-          ${lineMarkup}
+          <g clip-path="url(#${clipPath.id})">${lineMarkup}</g>
           ${dayLabels}
         </svg>
         ${showLegend ? `
@@ -4712,6 +4730,7 @@
       showTrends: true,
       trendState
     });
+    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight);
 
     const hoverZones = days.map((day, index) => {
       const prevX = index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2;
@@ -4738,9 +4757,10 @@
 
     body.innerHTML = `
       <svg class="tm-stat-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(`${modeLabel} ${durationLabel} current ranks chart`)}">
+        ${clipPath.markup}
         ${gridLines}
         <line class="tm-stat-chart-axis" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}"></line>
-        ${lineMarkup}
+        <g clip-path="url(#${clipPath.id})">${lineMarkup}</g>
         <line class="tm-stat-chart-hover-line" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" visibility="hidden"></line>
         ${hoverZones}
         ${dayLabels}
