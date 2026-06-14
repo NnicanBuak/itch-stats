@@ -1,13 +1,14 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.0
+// @version      5.1
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
 // @author       Nnican
 // @license      MIT
 // @grant        none
+// @updateURL    https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
 // @downloadURL  https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
 // @icon         https://itch.io/favicon.ico
 // ==/UserScript==
