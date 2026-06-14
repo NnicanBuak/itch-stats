@@ -968,7 +968,7 @@
 
     .tm-stat-chart-line {
       fill: none;
-      stroke-width: 3;
+      stroke-width: 1.75;
       stroke-linecap: round;
       stroke-linejoin: round;
       filter: drop-shadow(0 0 6px rgba(255,255,255,.1));
@@ -976,10 +976,10 @@
 
     .tm-stat-chart-line-bg {
       fill: none;
-      stroke-width: 1.25;
+      stroke-width: 3;
       stroke-linecap: round;
       stroke-linejoin: round;
-      opacity: .28;
+      opacity: .25;
     }
 
     .tm-stat-chart-trend {
@@ -992,12 +992,18 @@
     }
 
     .tm-stat-chart-trend-ma {
-      stroke-dasharray: 3 4;
+      stroke-dasharray: 1 5;
     }
 
     .tm-stat-chart-point {
       stroke: #111;
       stroke-width: 1.5;
+      opacity: 1;
+      transition: opacity .12s ease;
+    }
+
+    .tm-stat-chart-point.tm-dimmed {
+      opacity: .12;
     }
 
     .tm-stat-chart-hover-line {
@@ -4258,18 +4264,61 @@
       return `M${coords[0].x} ${coords[0].y} L${coords[1].x} ${coords[1].y}`;
     }
 
+    // Monotone cubic Hermite slopes prevent Bezier handles from overshooting the data.
+    const intervals = [];
+    const slopes = [];
+    for (let index = 0; index < coords.length - 1; index += 1) {
+      const interval = coords[index + 1].index - coords[index].index;
+      intervals.push(interval);
+      slopes.push((coords[index + 1].value - coords[index].value) / interval);
+    }
+
+    const derivatives = new Array(coords.length).fill(0);
+
+    function clampEndpointDerivative(derivative, slope) {
+      if (!slope || Math.sign(derivative) !== Math.sign(slope)) return 0;
+      return Math.sign(slope) * Math.min(Math.abs(derivative), 3 * Math.abs(slope));
+    }
+
+    derivatives[0] = clampEndpointDerivative(
+      ((2 * intervals[0] + intervals[1]) * slopes[0] - intervals[0] * slopes[1]) /
+        (intervals[0] + intervals[1]),
+      slopes[0]
+    );
+
+    const last = coords.length - 1;
+    derivatives[last] = clampEndpointDerivative(
+      ((2 * intervals[last - 1] + intervals[last - 2]) * slopes[last - 1] - intervals[last - 1] * slopes[last - 2]) /
+        (intervals[last - 1] + intervals[last - 2]),
+      slopes[last - 1]
+    );
+
+    for (let index = 1; index < last; index += 1) {
+      const previousSlope = slopes[index - 1];
+      const nextSlope = slopes[index];
+      if (!previousSlope || !nextSlope || previousSlope * nextSlope <= 0) {
+        derivatives[index] = 0;
+        continue;
+      }
+
+      const previousInterval = intervals[index - 1];
+      const nextInterval = intervals[index];
+      const firstWeight = 2 * nextInterval + previousInterval;
+      const secondWeight = nextInterval + 2 * previousInterval;
+      derivatives[index] = (firstWeight + secondWeight) /
+        (firstWeight / previousSlope + secondWeight / nextSlope);
+    }
+
     let path = `M${coords[0].x} ${coords[0].y}`;
 
-    for (let index = 0; index < coords.length - 1; index += 1) {
-      const p0 = coords[index - 1] || coords[index];
-      const p1 = coords[index];
-      const p2 = coords[index + 1];
-      const p3 = coords[index + 2] || p2;
-      const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = p1.y + (p2.y - p0.y) / 6;
-      const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = p2.y - (p3.y - p1.y) / 6;
-      path += ` C${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+    for (let index = 0; index < last; index += 1) {
+      const start = coords[index];
+      const end = coords[index + 1];
+      const interval = intervals[index];
+      const xDistance = end.x - start.x;
+      const firstControlValue = start.value + derivatives[index] * interval / 3;
+      const secondControlValue = end.value - derivatives[index + 1] * interval / 3;
+      path += ` C${start.x + xDistance / 3} ${getY(firstControlValue)}, ${end.x - xDistance / 3} ${getY(secondControlValue)}, ${end.x} ${end.y}`;
     }
 
     return path;
@@ -4340,14 +4389,13 @@
     if (trendState.ma) {
       const movingAveragePoints = buildMovingAverageTrendPoints(points, movingAverageWindow);
       if (movingAveragePoints.length >= 2) {
-        let path = `M${getX(movingAveragePoints[0].index)} ${getY(movingAveragePoints[0].value)}`;
-        for (let index = 1; index < movingAveragePoints.length; index += 1) {
-          const point = movingAveragePoints[index];
-          path += ` L${getX(point.index)} ${getY(point.value)}`;
-        }
+        const trendPoints = new Array(points.length).fill(null);
+        movingAveragePoints.forEach(point => {
+          trendPoints[point.index] = { value: point.value };
+        });
         result.push({
           kind: 'ma',
-          path
+          path: buildSmoothBezierPath(trendPoints, getX, getY)
         });
       }
     }
@@ -4374,7 +4422,7 @@
         if (!point) return '';
         const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
         return `
-          <circle class="tm-stat-chart-point" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
+          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
             <title>${escapeHtml(title)}</title>
           </circle>
         `;
@@ -4679,11 +4727,11 @@
     const trendControlsMarkup = `
       <label class="tm-stat-chart-trend-control">
         <input type="checkbox" data-chart-trend="linear" ${trendState.linear ? 'checked' : ''}>
-        <span>Trend: Linear</span>
+        <span>Линейный тренд</span>
       </label>
       <label class="tm-stat-chart-trend-control">
         <input type="checkbox" data-chart-trend="ma" ${trendState.ma ? 'checked' : ''}>
-        <span>Trend: MA</span>
+        <span>Скользящее среднее (${durationDays === 1 ? '3 точки' : '5 точек'})</span>
       </label>
     `;
 
@@ -4702,12 +4750,20 @@
     const svg = body.querySelector('.tm-stat-chart-svg');
     const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
 
+    function highlightChartPoints(activeIndex = null) {
+      body.querySelectorAll('[data-chart-point-index]').forEach(point => {
+        const pointIndex = Number(point.getAttribute('data-chart-point-index'));
+        point.classList.toggle('tm-dimmed', activeIndex !== null && pointIndex !== activeIndex);
+      });
+    }
+
     function hideTooltip() {
       if (tooltip) {
         tooltip.classList.remove('tm-visible');
         tooltip.innerHTML = '';
       }
       if (hoverLine) hoverLine.setAttribute('visibility', 'hidden');
+      highlightChartPoints();
     }
 
     body.querySelectorAll('[data-chart-day-index]').forEach(zone => {
@@ -4715,6 +4771,7 @@
         const index = Number(zone.getAttribute('data-chart-day-index'));
         const x = getX(index);
         const day = days[index];
+        highlightChartPoints(index);
         const rows = series.map(item => ({
           label: item.label,
           color: item.color,
