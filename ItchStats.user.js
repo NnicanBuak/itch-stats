@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.1
+// @version      5.2
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -4103,7 +4103,7 @@
       const shortLabel = formatter.format(date);
       const fullLabel = fullFormatter.format(date);
       const index = count - 1 - offset;
-      const shouldShowLabel = !sparseLabels || index % sparseStep === 0 || index === count - 1;
+      const shouldShowLabel = !sparseLabels || index % sparseStep === 0;
       days.push({
         key: formatChartDayKey(date),
         label: sparseLabels ? (shouldShowLabel ? fullLabel : '') : shortLabel,
