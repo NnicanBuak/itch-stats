@@ -4075,9 +4075,17 @@
     return `${formatChartDayKey(date)} ${hour}`;
   }
 
-  function getRecentChartDays(count = 7) {
+  function getRecentChartDays(count = 7, options = {}) {
+    const {
+      sparseLabels = false,
+      sparseStep = 7
+    } = options || {};
     const formatter = new Intl.DateTimeFormat('en-US', {
       weekday: 'short',
+      day: '2-digit'
+    });
+    const fullFormatter = new Intl.DateTimeFormat('en-US', {
+      month: 'short',
       day: '2-digit'
     });
     const days = [];
@@ -4085,9 +4093,14 @@
 
     for (let offset = count - 1; offset >= 0; offset -= 1) {
       const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+      const shortLabel = formatter.format(date);
+      const fullLabel = fullFormatter.format(date);
+      const index = count - 1 - offset;
+      const shouldShowLabel = !sparseLabels || index % sparseStep === 0 || index === count - 1;
       days.push({
         key: formatChartDayKey(date),
-        label: formatter.format(date)
+        label: sparseLabels ? (shouldShowLabel ? fullLabel : '') : shortLabel,
+        fullLabel: count <= 7 ? shortLabel : fullLabel
       });
     }
 
@@ -4107,7 +4120,7 @@
       const hourLabel = `${hour}h`;
       hours.push({
         key: `${dayKey} ${String(hour).padStart(2, '0')}`,
-        label: hour % 2 === 0 || hour === 23 ? hourLabel : '',
+        label: hour % 2 === 0 ? hourLabel : '',
         fullLabel: hourLabel,
         dayKey,
         hour
@@ -4144,7 +4157,7 @@
       const point = bestByDay.get(day.key);
       return point ? {
         dayKey: day.key,
-        dayLabel: day.label,
+        dayLabel: day.fullLabel || day.label,
         value: point.value,
         foundAt: point.foundAt
       } : null;
@@ -4513,7 +4526,12 @@
     }
 
     function buildDuration(durationDays) {
-      const days = durationDays === 1 ? getRecentChartHours() : getRecentChartDays(durationDays);
+      const days = durationDays === 1
+        ? getRecentChartHours()
+        : getRecentChartDays(durationDays, {
+          sparseLabels: durationDays >= 30,
+          sparseStep: 7
+        });
       const dayKeySet = new Set(days.map(day => day.key));
       return {
         days,
