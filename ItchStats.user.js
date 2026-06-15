@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.2.2
+// @version      5.2.3
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -146,6 +146,7 @@
   const STORAGE_KEY_INTERSECTIONS = 'tm_itch_summary_intersections_v1';
   const STORAGE_KEY_REFRESH_STATE = 'tm_itch_refresh_state_v1';
   const STORAGE_KEY_REFRESH_REDIRECT_GUARD = 'tm_itch_refresh_redirect_guard_v1';
+  const EXPORT_SCHEMA_VERSION = 1;
   const REFRESH_STATE_MAX_AGE = 15 * 60 * 1000;
   const WINDOW_NAME_TRANSFER_PREFIX = 'tm_itch_transfer_v1:';
 
@@ -253,6 +254,10 @@
       transform-style: preserve-3d !important;
       will-change: transform !important;
       overflow: visible !important;
+    }
+
+    .tm-rainbow-found.tm-clickable {
+      cursor: pointer;
     }
 
     .tm-rainbow-found img,
@@ -935,6 +940,14 @@
       transition: opacity .22s ease, transform .22s ease;
     }
 
+    .tm-summary-reminder.tm-clickable {
+      cursor: pointer;
+    }
+
+    .tm-summary-reminder.tm-clickable:hover {
+      filter: brightness(1.04);
+    }
+
     .tm-summary-reminder.tm-visible {
       opacity: 1;
       transform: translate(-50%, 0);
@@ -1006,6 +1019,72 @@
     .tm-summary-reminder-close:hover {
       background: rgba(255,255,255,.14);
       transform: scale(1.04);
+    }
+
+    .tm-summary-shell {
+      position: relative;
+      padding-right: 312px;
+    }
+
+    .tm-summary-main {
+      min-width: 0;
+    }
+
+    .tm-summary-sidepanel {
+      position: fixed;
+      top: 84px;
+      right: 12px;
+      width: min(280px, calc(100vw - 24px));
+      max-height: calc(100vh - 96px);
+      overflow: auto;
+      z-index: 100001;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(18,20,25,.94);
+      box-shadow: 0 18px 40px rgba(0,0,0,.35);
+      backdrop-filter: blur(14px);
+    }
+
+    .tm-summary-sidepanel-title {
+      font-size: 12px;
+      font-weight: 800;
+      opacity: .86;
+    }
+
+    .tm-summary-sidepanel .tm-series-toolbar {
+      margin-bottom: 0;
+    }
+
+    .tm-summary-control-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tm-summary-control-stack .tm-small-button {
+      margin: 0;
+      width: 100%;
+    }
+
+    .tm-summary-sidepanel-file {
+      display: none;
+    }
+
+    @media (max-width: 1280px) {
+      .tm-summary-shell {
+        padding-right: 0;
+      }
+
+      .tm-summary-sidepanel {
+        position: static;
+        width: 100%;
+        max-height: none;
+        margin-bottom: 14px;
+      }
     }
 
     .tm-stat-chart {
@@ -1424,6 +1503,14 @@
     localStorage.setItem(STORAGE_KEY_GAME_META, JSON.stringify(data));
   }
 
+  function deepClone(value, fallback = null) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   function storeMetaOnCurrentOrigin(meta) {
     if (!meta || typeof meta !== 'object') return;
 
@@ -1663,6 +1750,65 @@
     if (!key) return;
     all[key] = Array.isArray(items) ? items : [];
     saveIntersectionsState(all);
+  }
+
+  function getGameMetaForGame(game) {
+    const metaCache = loadGameMeta();
+    const possibleKeys = [
+      game?.id ? `id:${game.id}` : null,
+      game?.name ? `name:${normalize(game.name)}` : null
+    ].filter(Boolean);
+
+    for (const key of possibleKeys) {
+      if (metaCache[key]) return metaCache[key];
+    }
+
+    return null;
+  }
+
+  function collectImportedHiddenSections(records = [], meta = null) {
+    const result = getEmptyMetaSections();
+    const liveSections = meta?.sections && typeof meta.sections === 'object'
+      ? meta.sections
+      : {};
+
+    getFilterSectionConfigs().forEach(section => {
+      const liveLabels = Array.isArray(liveSections?.[section.key]?.labels)
+        ? liveSections[section.key].labels.map(label => normalizeSectionLabel(section.key, label))
+        : [];
+      const liveSet = new Set(liveLabels.map(normalize));
+      const storedLabels = normalizeLabelList(records.flatMap(record => getRecordSectionLabels(record, section.key)));
+
+      result[section.key] = storedLabels.filter(label => !liveSet.has(normalize(label)));
+    });
+
+    return result;
+  }
+
+  function getMetaSectionLabelsForSummary(meta, sectionKey) {
+    const liveLabels = Array.isArray(meta?.sections?.[sectionKey]?.labels)
+      ? meta.sections[sectionKey].labels.map(label => normalizeSectionLabel(sectionKey, label))
+      : getRecordSectionLabels({ meta }, sectionKey);
+    const importedLabels = Array.isArray(meta?.importedHiddenSections?.[sectionKey])
+      ? meta.importedHiddenSections[sectionKey].map(label => normalizeSectionLabel(sectionKey, label))
+      : [];
+    return normalizeLabelList([liveLabels, importedLabels]);
+  }
+
+  function getCurrentGameDataset(game, summaryData = null) {
+    const data = summaryData || getSummaryData(game);
+    return {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: Date.now(),
+      game: {
+        id: game?.id || data?.entry?.game?.id || data?.meta?.id || null,
+        name: game?.name || data?.entry?.game?.name || data?.meta?.name || ''
+      },
+      positionsEntry: deepClone(data?.entry || null, null),
+      meta: deepClone(data?.meta || getGameMetaForGame(game) || null, null),
+      intersections: deepClone(getGameIntersections(game), []),
+      possibleKeys: deepClone(data?.possibleKeys || [], [])
+    };
   }
 
   function loadRefreshState() {
@@ -2436,6 +2582,9 @@
       document.querySelector('[name="cf-turnstile-response"], .cf-turnstile, #challenge-running, #challenge-stage') ||
       location.search.includes('__cf_chl') ||
       text.includes('checking your browser') ||
+      text.includes('verify you are human') ||
+      text.includes('just a moment') ||
+      text.includes('please wait while we verify') ||
       text.includes('security check') ||
       text.includes('проверки безопасности') ||
       text.includes('один момент')
@@ -2724,6 +2873,9 @@
       tags: sections.tags.labels,
       genres: sections.genres.labels,
       platforms: sections.platforms.labels,
+      intersectionId: queueItemMatchesPage && queueItem?.section === 'intersections'
+        ? String(queueItem.id || '')
+        : '',
       summaryLabel: queueItemMatchesPage ? queueItem.label : ''
     };
   }
@@ -3162,15 +3314,30 @@
     };
     foundInfoByCard.set(card, info);
 
-    if (summaryUrl && focusTarget) {
-      info.classList.add('tm-clickable');
-      info.title = 'Открыть аналитику и перейти к записи';
-      info.addEventListener('click', () => {
+    function bindSummaryNavigationTarget(element) {
+      if (!element || !summaryUrl || !focusTarget) return;
+
+      element.classList.add('tm-clickable');
+      element.title = 'Открыть аналитику и перейти к записи';
+      element._tmSummaryNavigate = () => {
         setTransferredPendingSummaryWidget();
         setTransferredPendingSummaryFocus(focusTarget);
         location.href = summaryUrl;
-      });
+      };
+
+      if (!element._tmSummaryNavigateBound) {
+        element.addEventListener('click', event => {
+          if (event.target?.closest?.('a, button, input, textarea, select, label')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          element._tmSummaryNavigate?.();
+        });
+        element._tmSummaryNavigateBound = true;
+      }
     }
+
+    bindSummaryNavigationTarget(info);
+    bindSummaryNavigationTarget(card);
 
     return info;
   }
@@ -3404,7 +3571,12 @@
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if (status) {
-        setSearchStatus(status, 'Жду полной загрузки списка игр...');
+        setSearchStatus(status, isCloudflareChallengePage()
+          ? [
+            'Пауза: нужна проверка браузера.',
+            'Пройди её вручную, поиск продолжится автоматически.'
+          ]
+          : 'Жду полной загрузки списка игр...');
       }
 
       await sleep(500);
@@ -3419,6 +3591,12 @@
 
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
+      if (status) {
+        setSearchStatus(status, [
+          'Пауза: нужна проверка браузера.',
+          'Пройди её вручную, поиск продолжится автоматически.'
+        ]);
+      }
       await sleep(500);
 
       if (!isCloudflareChallengePage()) {
@@ -3653,8 +3831,6 @@
           `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n` +
           `Пролистано игр: ${getLoadedGamesCount()}`;
         if (refreshActive && targetGame) {
-          removeRecordForContext(targetGame, getSearchContextKey());
-          saveLimitReachedPosition(targetGame);
           setTimeout(() => {
             advanceRefreshFlow({
               status: 'not-found',
@@ -3717,7 +3893,6 @@
           `Не найдено до конца страницы.\n` +
           `Пролистано игр: ${getLoadedGamesCount()}`;
         if (refreshActive) {
-          removeRecordForContext(targetGame, getSearchContextKey());
           setTimeout(() => {
             advanceRefreshFlow({
               status: 'not-found',
@@ -4478,7 +4653,12 @@
 
     if (item.section === 'intersections') {
       const wanted = normalize(item.label);
-      return seriesRecords.filter(record => normalize(record?.meta?.summaryLabel) === wanted);
+      const wantedId = normalize(item.id);
+      return seriesRecords.filter(record => {
+        const recordIntersectionId = normalize(record?.meta?.intersectionId);
+        if (wantedId && recordIntersectionId === wantedId) return true;
+        return normalize(record?.meta?.summaryLabel) === wanted;
+      });
     }
 
     return seriesRecords.filter(record => {
@@ -5424,7 +5604,7 @@
     const sectionsData = getFilterSectionConfigs().reduce((acc, section) => {
       const sectionLinks = getRecordSectionLinks(meta, section.key);
       const canonicalLabels = normalizeLabelList(
-        getRecordSectionLabels({ meta }, section.key).map(label => canonicalizeLabelWithLinks(section.type, label, sectionLinks))
+        getMetaSectionLabelsForSummary(meta, section.key).map(label => canonicalizeLabelWithLinks(section.type, label, sectionLinks))
       );
 
       if (section.key === 'platforms' && canonicalLabels.some(label => normalize(label) === 'web') && !canonicalLabels.some(label => normalize(label) === 'mobile web')) {
@@ -5490,6 +5670,7 @@
       ...sectionRefreshItems,
       ...data.intersections.flatMap(item => enabledSeries.map(series => ({
         section: 'intersections',
+        id: item.id || '',
         label: item.label,
         series,
         url: buildSeriesUrl(series, item.popularUrl),
@@ -5503,6 +5684,104 @@
     }
 
     return sortRefreshItems(items, data.records);
+  }
+
+  function startSummaryRefresh(game, widget = null) {
+    if (!game) return false;
+
+    const refreshState = {
+      phase: 'search',
+      game: {
+        id: game?.id || null,
+        name: game?.name || 'Unknown game'
+      },
+      summaryUrl: location.href,
+      queue: buildRefreshQueue(game),
+      index: 0,
+      startedAt: Date.now()
+    };
+
+    if (!refreshState.queue.length) {
+      const status = widget?.querySelector?.('#tm-summary-refresh-status') || document.querySelector('#tm-summary-refresh-status');
+      if (status) status.textContent = 'Нет включённых разделов для обновления.';
+      return false;
+    }
+
+    saveRefreshState(refreshState);
+    location.href = refreshState.queue[0].url;
+    return true;
+  }
+
+  function triggerJsonDownload(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+
+  function replaceGameDataset(game, payload) {
+    if (!game || !payload) return false;
+
+    const positions = loadPositions();
+    const metaCache = loadGameMeta();
+    const intersectionsState = loadIntersectionsState();
+    const currentKey = getGameKey(game);
+    const currentPossibleKeys = [
+      game?.id ? `id:${game.id}` : null,
+      game?.name ? `name:${normalize(game.name)}` : null
+    ].filter(Boolean);
+    const importedGame = payload.game || {};
+    const importedPossibleKeys = Array.isArray(payload.possibleKeys) ? payload.possibleKeys.filter(Boolean) : [];
+    const importedCurrentKey = importedGame?.id
+      ? `id:${importedGame.id}`
+      : (importedGame?.name ? `name:${normalize(importedGame.name)}` : '');
+    const cleanupKeys = [...new Set([...currentPossibleKeys, ...importedPossibleKeys, importedCurrentKey].filter(Boolean))];
+
+    cleanupKeys.forEach(key => {
+      delete positions[key];
+      delete metaCache[key];
+    });
+
+    const importedEntry = deepClone(payload.positionsEntry, null);
+    if (importedEntry && currentKey) {
+      importedEntry.game = {
+        id: game?.id || importedEntry.game?.id || importedGame?.id || null,
+        name: game?.name || importedEntry.game?.name || importedGame?.name || ''
+      };
+      positions[currentKey] = importedEntry;
+    }
+
+    let importedMeta = deepClone(payload.meta, null);
+    if (!importedMeta && importedEntry?.game) {
+      importedMeta = {
+        id: importedEntry.game.id || importedGame?.id || null,
+        name: importedEntry.game.name || importedGame?.name || '',
+        url: '',
+        sections: getEmptyMetaSections()
+      };
+    }
+    if (importedMeta) {
+      importedMeta.id = game?.id || importedMeta.id || importedGame?.id || null;
+      importedMeta.name = game?.name || importedMeta.name || importedGame?.name || '';
+      importedMeta.importedHiddenSections = collectImportedHiddenSections(importedEntry?.records || [], importedMeta);
+      if (importedMeta.id) metaCache[`id:${importedMeta.id}`] = importedMeta;
+      if (importedMeta.name) metaCache[`name:${normalize(importedMeta.name)}`] = importedMeta;
+    }
+
+    const intersectionKey = getIntersectionStorageKey(game);
+    if (intersectionKey) {
+      intersectionsState[intersectionKey] = Array.isArray(payload.intersections) ? deepClone(payload.intersections, []) : [];
+    }
+
+    savePositions(positions);
+    saveGameMeta(metaCache);
+    saveIntersectionsState(intersectionsState);
+    return true;
   }
 
   function buildLegacyStatLabelCell(label) {
@@ -5591,13 +5870,14 @@
 
   function createSummaryStatsWidget() {
     const game = findGameForCurrentSummaryPage();
+    const summaryData = getSummaryData(game);
     const {
       possibleKeys,
       records,
       sectionsData,
       publicBaseUrl,
       intersections
-    } = getSummaryData(game);
+    } = summaryData;
     const publicGameUrl = publicBaseUrl
       ? publicBaseUrl + (publicBaseUrl.includes('?') ? '&' : '?') + 'tm_return=' + encodeURIComponent(location.href)
       : '';
@@ -5632,6 +5912,10 @@
 
     function getLatestAnalyticsTimestamp() {
       return records.reduce((best, record) => Math.max(best, Number(record?.foundAt || 0)), 0);
+    }
+
+    function launchSummaryRefresh() {
+      return startSummaryRefresh(game, widget);
     }
 
     function showSummaryReminder() {
@@ -5682,7 +5966,19 @@
         setTimeout(() => reminder.remove(), 180);
       };
 
-      reminder.querySelector('.tm-summary-reminder-close')?.addEventListener('click', removeReminder);
+      const closeButton = reminder.querySelector('.tm-summary-reminder-close');
+      closeButton?.addEventListener('click', event => {
+        event.stopPropagation();
+        removeReminder();
+      });
+      if (game) {
+        reminder.classList.add('tm-clickable');
+        reminder.title = 'Нажми, чтобы обновить аналитику';
+        reminder.addEventListener('click', () => {
+          launchSummaryRefresh();
+          removeReminder();
+        });
+      }
       setTimeout(() => reminder.classList.add('tm-visible'), 10);
       setTimeout(removeReminder, 5000);
     }
@@ -5910,12 +6206,9 @@
       });
     }).join('');
 
-    widget.innerHTML = `
-      <div class="tm-widget-head">
-        <div class="tm-widget-title">Summary Stats</div>
-        <button class="tm-widget-collapse" id="tm-summary-collapse" type="button" title="Свернуть">-</button>
-      </div>
-      <div class="tm-summary-root-body tm-widget-scroll-body">
+    const sidePanelHtml = `
+      <aside class="tm-summary-sidepanel">
+        <div class="tm-summary-sidepanel-title">Summary Controls</div>
         <div class="tm-series-toolbar">
           <div class="tm-series-toolbar-title">Разделы аналитики и обновления</div>
           <div class="tm-series-toggle-row">
@@ -5923,24 +6216,10 @@
           </div>
           <div class="tm-stat-muted">Обновление проходит только по включённым разделам.</div>
         </div>
-
-        ${sectionHtml('default', 'Общее', defaultRows)}
-        ${filterSectionsHtml}
-        ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
-          allowDelete: true
-        })}
-
-        <button class="tm-small-button tm-secondary-button tm-intersections-action" id="tm-build-intersection">
-          Собрать пересечение
-        </button>
-
-        ${!records.length ? `
-          <div class="tm-stat-muted">
-            Для этой игры пока нет сохранённых позиций.
-          </div>
-        ` : ''}
-
-        <div class="tm-action-row">
+        <div class="tm-summary-control-stack">
+          <button class="tm-small-button tm-secondary-button tm-intersections-action" id="tm-build-intersection">
+            Собрать пересечение
+          </button>
           ${publicGameUrl ? `
             <button class="tm-small-button tm-secondary-button" id="tm-fetch-game-tags">
               Получить теги
@@ -5950,13 +6229,7 @@
               Нет ссылки
             </button>
           `}
-
-          <button class="tm-small-button tm-clear-button" id="tm-clear-this-game-stats">
-            Очистить
-          </button>
-        </div>
-
-        ${game ? `
+          ${game ? `
             <button class="tm-small-button tm-primary-button" id="tm-refresh-game-stats">
               &#x21bb; Обновить
             </button>
@@ -5966,6 +6239,42 @@
               &#x21bb; Обновить
             </button>
           `}
+          <button class="tm-small-button tm-secondary-button" id="tm-export-game-stats">
+            Экспорт
+          </button>
+          <button class="tm-small-button tm-secondary-button" id="tm-import-game-stats">
+            Импорт
+          </button>
+          <input class="tm-summary-sidepanel-file" id="tm-import-game-stats-file" type="file" accept="application/json">
+          <button class="tm-small-button tm-clear-button" id="tm-clear-this-game-stats">
+            Очистить
+          </button>
+        </div>
+      </aside>
+    `;
+
+    widget.innerHTML = `
+      <div class="tm-widget-head">
+        <div class="tm-widget-title">Summary Stats</div>
+        <button class="tm-widget-collapse" id="tm-summary-collapse" type="button" title="Свернуть">-</button>
+      </div>
+      <div class="tm-summary-root-body tm-widget-scroll-body">
+        <div class="tm-summary-shell">
+          ${sidePanelHtml}
+          <div class="tm-summary-main">
+            ${sectionHtml('default', 'Общее', defaultRows)}
+            ${filterSectionsHtml}
+            ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
+              allowDelete: true
+            })}
+
+            ${!records.length ? `
+              <div class="tm-stat-muted">
+                Для этой игры пока нет сохранённых позиций.
+              </div>
+            ` : ''}
+          </div>
+        </div>
       </div>
     `;
 
@@ -6209,6 +6518,56 @@
       });
     });
 
+    function exportCurrentGameStats() {
+      const payload = getCurrentGameDataset(game, summaryData);
+      const fileNameBase = slugifyLabel(payload.game?.name || game?.name || 'itch-stats');
+      triggerJsonDownload(`itch-stats-${fileNameBase || 'game'}-${EXPORT_SCHEMA_VERSION}.json`, payload);
+    }
+
+    async function importCurrentGameStats(file) {
+      if (!file || !game) return;
+
+      let parsed = null;
+      try {
+        parsed = safeJsonParse(await file.text(), null);
+      } catch (_) {
+        parsed = null;
+      }
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        alert('Не удалось прочитать файл импорта.');
+        return;
+      }
+
+      const sameGame = isSameGame(parsed.game, game);
+      if (!sameGame) {
+        alert('Файл импорта относится к другой игре.');
+        return;
+      }
+
+      const existingPayload = getCurrentGameDataset(game, summaryData);
+      const hasConflict =
+        JSON.stringify(existingPayload.positionsEntry || null) !== JSON.stringify(parsed.positionsEntry || null) ||
+        JSON.stringify(existingPayload.meta || null) !== JSON.stringify(parsed.meta || null) ||
+        JSON.stringify(existingPayload.intersections || []) !== JSON.stringify(parsed.intersections || []);
+
+      if (hasConflict) {
+        const choice = prompt(
+          'Найдены конфликтующие данные для этой игры.\n1 — оставить текущие данные\n2 — заменить текущие импортом\n0 — отменить импорт',
+          '0'
+        );
+        if (choice === '1') return;
+        if (choice !== '2') return;
+      }
+
+      if (!replaceGameDataset(game, parsed)) {
+        alert('Не удалось импортировать данные.');
+        return;
+      }
+
+      createSummaryStatsWidget();
+    }
+
     const buildIntersectionButton = widget.querySelector('#tm-build-intersection');
     if (buildIntersectionButton) {
       buildIntersectionButton.addEventListener('click', () => {
@@ -6247,40 +6606,43 @@
     const refreshButton = widget.querySelector('#tm-refresh-game-stats');
     if (refreshButton && game) {
       refreshButton.addEventListener('click', () => {
-        const refreshState = {
-          phase: 'search',
-          game: {
-            id: game?.id || null,
-            name: game?.name || 'Unknown game'
-          },
-          summaryUrl: location.href,
-          queue: buildRefreshQueue(game),
-          index: 0,
-          startedAt: Date.now()
-        };
-
-        if (!refreshState.queue.length) {
-          const status = widget.querySelector('#tm-summary-refresh-status');
-          if (status) status.textContent = 'Нет включённых разделов для обновления.';
-          return;
-        }
-
-        saveRefreshState(refreshState);
-        location.href = refreshState.queue[0].url;
+        launchSummaryRefresh();
       });
     }
+
+    const exportButton = widget.querySelector('#tm-export-game-stats');
+    exportButton?.addEventListener('click', exportCurrentGameStats);
+
+    const importButton = widget.querySelector('#tm-import-game-stats');
+    const importInput = widget.querySelector('#tm-import-game-stats-file');
+    importButton?.addEventListener('click', () => importInput?.click());
+    importInput?.addEventListener('change', async () => {
+      const file = importInput.files?.[0];
+      if (!file) return;
+      await importCurrentGameStats(file);
+      importInput.value = '';
+    });
 
     const clearButton = widget.querySelector('#tm-clear-this-game-stats');
     clearButton.addEventListener('click', () => {
       if (!confirm('Очистить сохранённую статистику для этой игры?')) return;
 
       const all = loadPositions();
+      const metaCache = loadGameMeta();
+      const intersectionsState = loadIntersectionsState();
+      const intersectionKey = getIntersectionStorageKey(game);
 
       for (const key of possibleKeys) {
         delete all[key];
+        delete metaCache[key];
       }
 
       savePositions(all);
+      saveGameMeta(metaCache);
+      if (intersectionKey) {
+        delete intersectionsState[intersectionKey];
+        saveIntersectionsState(intersectionsState);
+      }
       createSummaryStatsWidget();
     });
 
