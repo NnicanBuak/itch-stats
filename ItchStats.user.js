@@ -31,6 +31,109 @@
     { key: 'top-rated', label: 'Top Rated', pathPart: 'top-rated' }
   ];
   const ANALYTICS_SERIES = SEARCH_SERIES.filter(item => item.key !== 'newest');
+  const FILTER_SECTION_DEFINITIONS = [
+    { key: 'platforms', type: 'platform', title: 'Платформы', selection: 'single' },
+    { key: 'genres', type: 'genre', title: 'Жанры', selection: 'single' },
+    { key: 'tags', type: 'tag', title: 'Теги', selection: 'multi' },
+    { key: 'price', type: 'price', title: 'Price', selection: 'price' },
+    { key: 'type', type: 'type', title: 'Type', selection: 'single' },
+    { key: 'misc', type: 'misc', title: 'Misc', selection: 'multi' },
+    { key: 'session_length', type: 'session_length', title: 'Average session length', selection: 'single' },
+    { key: 'multiplayer', type: 'multiplayer', title: 'Multiplayer', selection: 'single' },
+    { key: 'languages', type: 'language', title: 'Languages', selection: 'multi' }
+  ];
+  const FILTER_SECTION_LABEL_ALIASES = {
+    genres: ['genre', 'genres'],
+    platforms: ['platform', 'platforms'],
+    tags: ['tag', 'tags'],
+    price: ['price'],
+    type: ['type'],
+    misc: ['misc'],
+    session_length: ['average session length', 'session length', 'duration'],
+    multiplayer: ['multiplayer features', 'multiplayer'],
+    languages: ['languages', 'language']
+  };
+  const FILTER_LABEL_TO_TOKEN = {
+    price: {
+      free: 'free',
+      'on sale': 'on-sale',
+      paid: 'paid',
+      '$5 or less': '5-dollars-or-less',
+      '$15 or less': '15-dollars-or-less'
+    },
+    type: {
+      html5: 'html5',
+      downloadable: 'downloadable'
+    },
+    misc: {
+      'with steam keys': 'steam-key',
+      'in game jams': 'in-jam',
+      'not in game jams': 'exclude-jam',
+      'with demos': 'has-demo',
+      featured: 'featured'
+    },
+    session_length: {
+      'a few seconds': 'duration-seconds',
+      'a few minutes': 'duration-minutes',
+      'about a half-hour': 'duration-half-hour',
+      'about an hour': 'duration-hour',
+      'a few hours': 'duration-hours',
+      'days or more': 'duration-days'
+    },
+    multiplayer: {
+      'local multiplayer': 'local-multiplayer',
+      'server-based networked multiplayer': 'multiplayer-server',
+      'ad-hoc networked multiplayer': 'multiplayer-adhoc'
+    },
+    language: {
+      english: 'lang-en',
+      russian: 'lang-ru'
+    }
+  };
+  const FILTER_DISPLAY_LABELS = {
+    price: {
+      free: 'Free',
+      'on sale': 'On Sale',
+      paid: 'Paid',
+      '$5 or less': '$5 or less',
+      '$15 or less': '$15 or less'
+    },
+    type: {
+      html5: 'HTML5',
+      downloadable: 'Downloadable'
+    },
+    misc: {
+      'with steam keys': 'With Steam keys',
+      'in game jams': 'In game jams',
+      'not in game jams': 'Not in game jams',
+      'with demos': 'With demos',
+      featured: 'Featured'
+    },
+    session_length: {
+      'a few seconds': 'A few seconds',
+      'a few minutes': 'A few minutes',
+      'about a half-hour': 'About a half-hour',
+      'about an hour': 'About an hour',
+      'a few hours': 'A few hours',
+      'days or more': 'Days or more'
+    },
+    multiplayer: {
+      'local multiplayer': 'Local multiplayer',
+      'server-based networked multiplayer': 'Server-based networked multiplayer',
+      'ad-hoc networked multiplayer': 'Ad-hoc networked multiplayer'
+    },
+    language: {
+      english: 'English',
+      russian: 'Russian'
+    }
+  };
+  const FILTER_TOKEN_TO_LABEL = Object.entries(FILTER_LABEL_TO_TOKEN).reduce((acc, [type, entries]) => {
+    acc[type] = Object.entries(entries).reduce((bucket, [label, token]) => {
+      bucket[normalize(token)] = label;
+      return bucket;
+    }, {});
+    return acc;
+  }, {});
 
   const STORAGE_KEY_GAMES = 'tm_itch_dashboard_published_games_v4';
   const STORAGE_KEY_COLLAPSED = 'tm_itch_finder_collapsed_v4';
@@ -100,6 +203,36 @@
       acc[item.key] = true;
       return acc;
     }, {});
+  }
+
+  function getFilterSectionConfigs() {
+    return FILTER_SECTION_DEFINITIONS;
+  }
+
+  function getFilterSectionConfigByKey(key) {
+    return FILTER_SECTION_DEFINITIONS.find(item => item.key === key) || null;
+  }
+
+  function getFilterSectionConfigByType(type) {
+    return FILTER_SECTION_DEFINITIONS.find(item => item.type === type) || null;
+  }
+
+  function getFilterSectionKeyByType(type) {
+    return getFilterSectionConfigByType(type)?.key || '';
+  }
+
+  function getEmptyMetaSections() {
+    return FILTER_SECTION_DEFINITIONS.reduce((acc, item) => {
+      acc[item.key] = {
+        labels: [],
+        links: []
+      };
+      return acc;
+    }, {});
+  }
+
+  function getPriceBaseSelectionLabels() {
+    return ['Free', 'Paid', '$5 or less', '$15 or less'];
   }
 
   const style = document.createElement('style');
@@ -973,6 +1106,7 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       filter: drop-shadow(0 0 6px rgba(255,255,255,.1));
+      transition: opacity .12s ease;
     }
 
     .tm-stat-chart-line-bg {
@@ -981,6 +1115,7 @@
       stroke-linecap: round;
       stroke-linejoin: round;
       opacity: .25;
+      transition: opacity .12s ease;
     }
 
     .tm-stat-chart-trend {
@@ -990,6 +1125,7 @@
       stroke-linejoin: round;
       opacity: .85;
       stroke-dasharray: 5 4;
+      transition: opacity .12s ease;
     }
 
     .tm-stat-chart-trend-ma {
@@ -1003,7 +1139,9 @@
       transition: opacity .12s ease;
     }
 
-    .tm-stat-chart-point.tm-dimmed {
+    .tm-stat-chart-point.tm-dimmed,
+    .tm-stat-chart-point.tm-day-dimmed,
+    .tm-stat-chart-point.tm-series-dimmed {
       opacity: .12;
     }
 
@@ -1054,6 +1192,11 @@
       font-size: 11px;
       color: rgba(255,255,255,.9);
       margin-top: 4px;
+      transition: opacity .12s ease;
+    }
+
+    .tm-stat-chart-tooltip-row.tm-series-dimmed {
+      opacity: .22;
     }
 
     .tm-stat-chart-tooltip-dot {
@@ -1091,6 +1234,17 @@
       background: rgba(255,255,255,.05);
       font-size: 11px;
       color: rgba(255,255,255,.86);
+      transition: opacity .12s ease, background .12s ease;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .tm-stat-chart-legend-item.tm-series-active {
+      background: rgba(255,255,255,.14);
+    }
+
+    .tm-stat-chart-legend-item.tm-series-dimmed {
+      opacity: .26;
     }
 
     .tm-stat-chart-legend-swatch {
@@ -1123,6 +1277,12 @@
     .tm-stat-chart-trend-control input {
       margin: 0;
       accent-color: #d36d6d;
+    }
+
+    .tm-stat-chart-line.tm-series-dimmed,
+    .tm-stat-chart-line-bg.tm-series-dimmed,
+    .tm-stat-chart-trend.tm-series-dimmed {
+      opacity: .12;
     }
 
     .tm-action-row {
@@ -1621,6 +1781,169 @@
     return '';
   }
 
+  function getKnownFilterLabel(type, value) {
+    const normalizedType = normalize(type);
+    const normalizedValue = normalize(value);
+    if (!normalizedType || !normalizedValue) return '';
+
+    if (normalizedType === 'platform') {
+      return getKnownPlatformLabel(normalizedValue);
+    }
+
+    const bucket = FILTER_TOKEN_TO_LABEL[normalizedType];
+    if (bucket?.[normalizedValue]) {
+      return FILTER_DISPLAY_LABELS[normalizedType]?.[bucket[normalizedValue]] || bucket[normalizedValue];
+    }
+
+    if (normalizedType === 'language' && normalizedValue.startsWith('lang-')) {
+      const code = normalizedValue.replace(/^lang-/, '').trim();
+      if (!code) return '';
+      return code.toUpperCase();
+    }
+
+    return '';
+  }
+
+  function normalizeSectionLabel(sectionKey, label) {
+    const config = getFilterSectionConfigByKey(sectionKey);
+    const text = String(label || '').trim();
+    if (!config || !text) return '';
+
+    if (config.type === 'platform') return normalizePlatformLabel(text);
+    if (config.type === 'language') {
+      const known = getKnownFilterLabel(config.type, text);
+      if (known) return known;
+      return text.length <= 3 ? text.toUpperCase() : text;
+    }
+
+    return text;
+  }
+
+  function getSearchTokenForLabel(type, label) {
+    const normalizedType = normalize(type);
+    const text = String(label || '').trim();
+    const normalizedLabel = normalize(text);
+    if (!normalizedType || !normalizedLabel) return '';
+
+    if (normalizedType === 'platform') {
+      if (normalizedLabel === 'html5' || normalizedLabel === 'web') return 'platform-web';
+      if (normalizedLabel === 'mobile web') return 'platform-mobile-web';
+      return `platform-${slugifyLabel(text)}`;
+    }
+
+    if (normalizedType === 'genre') return `genre-${slugifyLabel(text)}`;
+    if (normalizedType === 'tag') return `tag-${slugifyLabel(text)}`;
+    if (normalizedType === 'language' && normalizedLabel.length <= 3 && !normalizedLabel.includes(' ')) {
+      return `lang-${normalizedLabel}`;
+    }
+
+    const mapped = FILTER_LABEL_TO_TOKEN[normalizedType]?.[normalizedLabel];
+    if (mapped) return mapped;
+
+    if (normalizedType === 'language') {
+      return `lang-${slugifyLabel(text)}`;
+    }
+
+    return slugifyLabel(text);
+  }
+
+  function getLabelFromSearchToken(type, token) {
+    const normalizedType = normalize(type);
+    const normalizedToken = normalize(token);
+    if (!normalizedType || !normalizedToken) return '';
+
+    if (normalizedType === 'platform') {
+      return getKnownPlatformLabel(normalizedToken);
+    }
+
+    const mapped = FILTER_TOKEN_TO_LABEL[normalizedType]?.[normalizedToken];
+    if (mapped) return FILTER_DISPLAY_LABELS[normalizedType]?.[mapped] || mapped;
+
+    if (normalizedType === 'genre' && normalizedToken.startsWith('genre-')) {
+      return normalizedToken.replace(/^genre-/, '').replaceAll('-', ' ');
+    }
+
+    if (normalizedType === 'tag' && normalizedToken.startsWith('tag-')) {
+      return normalizedToken.replace(/^tag-/, '').replaceAll('-', ' ');
+    }
+
+    if (normalizedType === 'language' && normalizedToken.startsWith('lang-')) {
+      return normalizedToken.replace(/^lang-/, '').toUpperCase();
+    }
+
+    return '';
+  }
+
+  function detectFilterSectionKeyFromHref(href, label = '') {
+    const absolute = toAbsoluteItchUrl(href);
+    if (!absolute) return '';
+
+    try {
+      const url = new URL(absolute);
+      const parts = url.pathname.split('/').filter(Boolean);
+      const gamesIndex = parts.indexOf('games');
+      const filterParts = gamesIndex >= 0
+        ? parts.slice(gamesIndex + 1).filter(part => part && !isKnownSeriesPathPart(part))
+        : [];
+
+      for (const part of filterParts) {
+        const normalizedPart = normalize(part);
+        if (normalizedPart.startsWith('genre-')) return 'genres';
+        if (normalizedPart.startsWith('platform-')) return 'platforms';
+        if (normalizedPart.startsWith('tag-')) return 'tags';
+        if (getKnownPlatformLabel(normalizedPart)) return 'platforms';
+        if (normalizedPart.startsWith('lang-')) return 'languages';
+        if (FILTER_TOKEN_TO_LABEL.price?.[normalizedPart]) return 'price';
+        if (FILTER_TOKEN_TO_LABEL.type?.[normalizedPart]) return 'type';
+        if (FILTER_TOKEN_TO_LABEL.misc?.[normalizedPart]) return 'misc';
+        if (FILTER_TOKEN_TO_LABEL.session_length?.[normalizedPart]) return 'session_length';
+        if (FILTER_TOKEN_TO_LABEL.multiplayer?.[normalizedPart]) return 'multiplayer';
+      }
+    } catch (_) {}
+
+    const labelText = normalize(label);
+    for (const [sectionKey, aliases] of Object.entries(FILTER_SECTION_LABEL_ALIASES)) {
+      if (aliases.some(alias => labelText.includes(normalize(alias)))) {
+        return sectionKey;
+      }
+    }
+
+    return '';
+  }
+
+  function getRecordSectionLabels(record, sectionKey) {
+    if (!record || !sectionKey) return [];
+
+    const meta = record.meta && typeof record.meta === 'object' ? record.meta : {};
+    const sectionLabels = Array.isArray(meta.sections?.[sectionKey]?.labels)
+      ? meta.sections[sectionKey].labels
+      : [];
+
+    if (sectionLabels.length) {
+      return normalizeLabelList(sectionLabels.map(label => normalizeSectionLabel(sectionKey, label)));
+    }
+
+    if (sectionKey === 'genres' && Array.isArray(meta.genres)) return normalizeLabelList(meta.genres);
+    if (sectionKey === 'platforms' && Array.isArray(meta.platforms)) return normalizeLabelList(meta.platforms.map(normalizePlatformLabel));
+    if (sectionKey === 'tags' && Array.isArray(meta.tags)) return normalizeLabelList(meta.tags);
+
+    return [];
+  }
+
+  function getRecordSectionLinks(meta, sectionKey) {
+    if (!meta || !sectionKey) return [];
+
+    const sectionLinks = Array.isArray(meta.sections?.[sectionKey]?.links)
+      ? meta.sections[sectionKey].links
+      : [];
+
+    if (sectionLinks.length) return normalizeLinkEntries(sectionLinks);
+    if (sectionKey === 'genres' && Array.isArray(meta.genreLinks)) return normalizeLinkEntries(meta.genreLinks);
+    if (sectionKey === 'platforms' && Array.isArray(meta.platformLinks)) return normalizeLinkEntries(meta.platformLinks);
+    if (sectionKey === 'tags' && Array.isArray(meta.tagLinks)) return normalizeLinkEntries(meta.tagLinks);
+    return [];
+  }
+
   function getSearchPathParts(pathname = location.pathname) {
     return String(pathname || '').split('/').filter(Boolean);
   }
@@ -1744,15 +2067,17 @@
     const normalizedText = normalize(text);
     const normalizedLinks = normalizeLinkEntries(links);
     const exactMatch = normalizedLinks.find(item => normalize(item.label) === normalizedText);
-    if (exactMatch) return type === 'platform' ? normalizePlatformLabel(exactMatch.label) : exactMatch.label;
+    if (exactMatch) return type === 'platform' ? normalizePlatformLabel(exactMatch.label) : normalizeSectionLabel(getFilterSectionKeyByType(type), exactMatch.label) || exactMatch.label;
 
-    const slugToken = type === 'platform' && normalizedText === 'html5'
-      ? 'html5'
-      : `${type}-${slugifyLabel(text)}`;
+    const slugToken = getSearchTokenForLabel(type, text);
     const tokenMatch = findLinkEntryByToken(type, slugToken, normalizedLinks);
     return tokenMatch?.label
-      ? (type === 'platform' ? normalizePlatformLabel(tokenMatch.label) : tokenMatch.label)
-      : (type === 'platform' ? normalizePlatformLabel(text) : text);
+      ? (type === 'platform'
+          ? normalizePlatformLabel(tokenMatch.label)
+          : normalizeSectionLabel(getFilterSectionKeyByType(type), tokenMatch.label) || tokenMatch.label)
+      : (type === 'platform'
+          ? normalizePlatformLabel(text)
+          : normalizeSectionLabel(getFilterSectionKeyByType(type), text) || text);
   }
 
   function toAbsoluteItchUrl(href) {
@@ -1815,7 +2140,17 @@
   }
 
   function sortIntersectionParts(parts) {
-    const order = { genre: 0, platform: 1, tag: 2 };
+    const order = {
+      genre: 0,
+      platform: 1,
+      type: 2,
+      multiplayer: 3,
+      session_length: 4,
+      price: 5,
+      misc: 6,
+      language: 7,
+      tag: 8
+    };
     return [...parts].sort((a, b) => {
       const typeDelta = (order[a.type] ?? 99) - (order[b.type] ?? 99);
       if (typeDelta) return typeDelta;
@@ -1832,8 +2167,10 @@
     for (const part of sortIntersectionParts(Array.isArray(parts) ? parts : [])) {
       const labelKey = normalize(part?.label);
       const href = String(part?.href || '').trim();
-      if (!part?.type || !labelKey || !href || seen.has(labelKey)) continue;
-      seen.add(labelKey);
+      const typeKey = normalize(part?.type);
+      const dedupeKey = `${typeKey}|${labelKey}`;
+      if (!typeKey || !labelKey || !href || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       result.push(part);
     }
 
@@ -1851,12 +2188,24 @@
     const segmentsByType = {
       genre: [],
       platform: [],
-      tag: []
+      tag: [],
+      price: [],
+      type: [],
+      misc: [],
+      session_length: [],
+      multiplayer: [],
+      language: []
     };
     const seenByType = {
       genre: new Set(),
       platform: new Set(),
-      tag: new Set()
+      tag: new Set(),
+      price: new Set(),
+      type: new Set(),
+      misc: new Set(),
+      session_length: new Set(),
+      multiplayer: new Set(),
+      language: new Set()
     };
     const searchPairs = [];
     const seenSearchPairs = new Set();
@@ -1890,6 +2239,12 @@
     const segments = [
       ...segmentsByType.genre,
       ...segmentsByType.platform,
+      ...segmentsByType.type,
+      ...segmentsByType.multiplayer,
+      ...segmentsByType.session_length,
+      ...segmentsByType.price,
+      ...segmentsByType.misc,
+      ...segmentsByType.language,
       ...segmentsByType.tag
     ];
     const path = segments.join('/');
@@ -1906,23 +2261,14 @@
   }
 
   function buildSearchUrlForLabel(type, label) {
-    const slug = slugifyLabel(label);
-
     if (type === 'main') {
       const seriesMatch = SEARCH_SERIES.find(item => normalize(item.label) === normalize(label));
       return buildSeriesUrl(seriesMatch?.key || 'popular', 'https://itch.io/games');
     }
 
-    if (type === 'platform' && (normalize(label) === 'html5' || normalize(label) === 'web')) {
-      return 'https://itch.io/games/platform-web';
-    }
-
-    if (type === 'platform' && normalize(label) === 'mobile web') {
-      return 'https://itch.io/games/platform-mobile-web';
-    }
-
-    if (!slug) return '';
-    return `https://itch.io/games/${type}-${slug}`;
+    const token = getSearchTokenForLabel(type, label);
+    if (!token) return '';
+    return `https://itch.io/games/${token}`;
   }
 
   function removeRecordForContext(game, contextKey) {
@@ -2161,13 +2507,13 @@
   function getRefreshQueueItemLabel(item) {
     if (!item) return '';
 
-    const sectionLabels = {
+    const sectionLabels = getFilterSectionConfigs().reduce((acc, section) => {
+      acc[section.key] = section.title;
+      return acc;
+    }, {
       default: 'Общее',
-      platforms: 'Платформа',
-      genres: 'Жанр',
-      tags: 'Тег',
       intersections: 'Пересечение'
-    };
+    });
     const section = sectionLabels[item.section] || item.section || '';
     const series = getSeriesLabel(item.series);
     const label = item.label && item.label !== 'Default' ? `: ${item.label}` : '';
@@ -2257,44 +2603,94 @@
       if (nameKey && gameMetaCache['name:' + nameKey]) return gameMetaCache['name:' + nameKey];
       return null;
     })();
-    const gameGenreLinks = Array.isArray(gameMeta?.genreLinks) ? gameMeta.genreLinks : [];
-    const gamePlatformLinks = Array.isArray(gameMeta?.platformLinks) ? gameMeta.platformLinks : [];
-    const gameTagLinks = Array.isArray(gameMeta?.tagLinks) ? gameMeta.tagLinks : [];
+    const metaSections = getEmptyMetaSections();
+    getFilterSectionConfigs().forEach(section => {
+      metaSections[section.key] = {
+        labels: Array.isArray(gameMeta?.sections?.[section.key]?.labels)
+          ? gameMeta.sections[section.key].labels
+          : getRecordSectionLabels({ meta: gameMeta }, section.key),
+        links: getRecordSectionLinks(gameMeta, section.key)
+      };
+    });
 
     const category = getSearchCategoryFromPath(location.pathname);
+    const sections = getEmptyMetaSections();
 
-    const tags = [];
-    const genres = [];
-    const platforms = [];
+    function pushSectionLabel(sectionKey, label) {
+      const normalizedLabel = normalizeSectionLabel(sectionKey, label);
+      if (!normalizedLabel || isIgnoredMetaLabel(normalizedLabel)) return;
+      sections[sectionKey].labels.push(normalizedLabel);
+    }
 
     function addBySlug(value) {
       if (!value) return;
       if (isIgnoredSearchSegment(value)) return;
+      const normalizedValue = normalize(value);
 
-      const platformLabel = getKnownPlatformLabel(value);
+      if (normalizedValue.startsWith('tag-')) {
+        pushSectionLabel('tags', canonicalizeLabelWithLinks('tag', getLabelFromSearchToken('tag', normalizedValue), metaSections.tags.links));
+        return;
+      }
+
+      if (normalizedValue.startsWith('genre-')) {
+        pushSectionLabel('genres', canonicalizeLabelWithLinks('genre', getLabelFromSearchToken('genre', normalizedValue), metaSections.genres.links));
+        return;
+      }
+
+      if (normalizedValue.startsWith('platform-')) {
+        const tokenMatch = findLinkEntryByToken('platform', normalizedValue, metaSections.platforms.links);
+        pushSectionLabel('platforms', normalizePlatformLabel(tokenMatch?.label || getLabelFromSearchToken('platform', normalizedValue)));
+        return;
+      }
+
+      if (normalizedValue.startsWith('lang-')) {
+        pushSectionLabel('languages', canonicalizeLabelWithLinks('language', getLabelFromSearchToken('language', normalizedValue), metaSections.languages.links));
+        return;
+      }
+
+      const mappedPrice = getKnownFilterLabel('price', normalizedValue);
+      if (mappedPrice) {
+        pushSectionLabel('price', canonicalizeLabelWithLinks('price', mappedPrice, metaSections.price.links));
+        return;
+      }
+
+      const mappedType = getKnownFilterLabel('type', normalizedValue);
+      if (mappedType) {
+        pushSectionLabel('type', canonicalizeLabelWithLinks('type', mappedType, metaSections.type.links));
+        if (normalizedValue === 'html5') {
+          pushSectionLabel('platforms', 'Web');
+        }
+        return;
+      }
+
+      const mappedMisc = getKnownFilterLabel('misc', normalizedValue);
+      if (mappedMisc) {
+        pushSectionLabel('misc', canonicalizeLabelWithLinks('misc', mappedMisc, metaSections.misc.links));
+        return;
+      }
+
+      const mappedSession = getKnownFilterLabel('session_length', normalizedValue);
+      if (mappedSession) {
+        pushSectionLabel('session_length', canonicalizeLabelWithLinks('session_length', mappedSession, metaSections.session_length.links));
+        return;
+      }
+
+      const mappedMultiplayer = getKnownFilterLabel('multiplayer', normalizedValue);
+      if (mappedMultiplayer) {
+        pushSectionLabel('multiplayer', canonicalizeLabelWithLinks('multiplayer', mappedMultiplayer, metaSections.multiplayer.links));
+        return;
+      }
+
+      const mappedLanguage = getKnownFilterLabel('language', normalizedValue);
+      if (mappedLanguage) {
+        pushSectionLabel('languages', canonicalizeLabelWithLinks('language', mappedLanguage, metaSections.languages.links));
+        return;
+      }
+
+      const platformLabel = getKnownPlatformLabel(normalizedValue);
       if (platformLabel) {
-        platforms.push(platformLabel);
-        return;
+        pushSectionLabel('platforms', platformLabel);
       }
-
-      if (value.startsWith('tag-')) {
-        tags.push(canonicalizeLabelWithLinks('tag', value.replace(/^tag-/, '').replaceAll('-', ' '), gameTagLinks));
-        return;
-      }
-
-      if (value.startsWith('genre-')) {
-        genres.push(canonicalizeLabelWithLinks('genre', value.replace(/^genre-/, '').replaceAll('-', ' '), gameGenreLinks));
-        return;
-      }
-
-      if (value.startsWith('platform-')) {
-        const tokenMatch = findLinkEntryByToken('platform', value, gamePlatformLinks);
-        platforms.push(normalizePlatformLabel(tokenMatch?.label || value.replace(/^platform-/, '').replaceAll('-', ' ')));
-        return;
-      }
-
-      const tokenMatch = findLinkEntryByToken('platform', value, gamePlatformLinks);
-      if (tokenMatch?.label) platforms.push(normalizePlatformLabel(tokenMatch.label));
     }
 
     parts.forEach(addBySlug);
@@ -2305,24 +2701,29 @@
     }
 
     if (queueItemMatchesPage) {
-      if (queueItem.section === 'platforms') platforms.push(queueItem.label);
-      if (queueItem.section === 'genres') genres.push(queueItem.label);
-      if (queueItem.section === 'tags') tags.push(queueItem.label);
+      if (sections[queueItem.section]) {
+        pushSectionLabel(queueItem.section, queueItem.label);
+      }
       if (queueItem.section === 'intersections' && Array.isArray(queueItem.parts)) {
         queueItem.parts.forEach(part => {
           if (!part?.label) return;
-          if (part.type === 'platform') platforms.push(normalizePlatformLabel(part.label));
-          if (part.type === 'genre') genres.push(part.label);
-          if (part.type === 'tag') tags.push(part.label);
+          const sectionKey = getFilterSectionKeyByType(part.type);
+          if (sectionKey) pushSectionLabel(sectionKey, part.label);
         });
       }
     }
 
+    getFilterSectionConfigs().forEach(section => {
+      sections[section.key].labels = normalizeLabelList(sections[section.key].labels);
+      sections[section.key].links = buildFilterLinkEntries(section.type, sections[section.key].labels, metaSections[section.key].links);
+    });
+
     return {
       category,
-      tags: [...new Set(tags)],
-      genres: [...new Set(genres)],
-      platforms: [...new Set(platforms)],
+      sections,
+      tags: sections.tags.labels,
+      genres: sections.genres.labels,
+      platforms: sections.platforms.labels,
       summaryLabel: queueItemMatchesPage ? queueItem.label : ''
     };
   }
@@ -2336,19 +2737,11 @@
     if (recordCategory) labels.push(recordCategory);
     if (record.meta?.summaryLabel) labels.push(record.meta.summaryLabel);
 
-    if (Array.isArray(record.meta?.tags)) {
-      record.meta.tags
-        .filter(tag => !isIgnoredMetaLabel(tag))
-        .forEach(tag => labels.push(tag));
-    }
-
-    if (Array.isArray(record.meta?.genres)) {
-      record.meta.genres.forEach(genre => labels.push(genre));
-    }
-
-    if (Array.isArray(record.meta?.platforms)) {
-      record.meta.platforms.forEach(platform => labels.push(platform));
-    }
+    getFilterSectionConfigs().forEach(section => {
+      getRecordSectionLabels(record, section.key)
+        .filter(label => !isIgnoredMetaLabel(label))
+        .forEach(label => labels.push(label));
+    });
 
     const rawTags = String(record.tags || '');
     const parts = String(record.path || '')
@@ -2360,8 +2753,31 @@
     }
 
     parts
-      .filter(part => part.startsWith('tag-') || part.startsWith('genre-') || part.startsWith('platform-') || getKnownPlatformLabel(part))
-      .map(part => getKnownPlatformLabel(part) || part.replace(/^(tag|genre|platform)-/, '').replaceAll('-', ' '))
+      .filter(part => {
+        const normalizedPart = normalize(part);
+        return normalizedPart.startsWith('tag-')
+          || normalizedPart.startsWith('genre-')
+          || normalizedPart.startsWith('platform-')
+          || normalizedPart.startsWith('lang-')
+          || !!getKnownPlatformLabel(normalizedPart)
+          || !!getKnownFilterLabel('price', normalizedPart)
+          || !!getKnownFilterLabel('type', normalizedPart)
+          || !!getKnownFilterLabel('misc', normalizedPart)
+          || !!getKnownFilterLabel('session_length', normalizedPart)
+          || !!getKnownFilterLabel('multiplayer', normalizedPart)
+          || !!getKnownFilterLabel('language', normalizedPart);
+      })
+      .map(part => {
+        const normalizedPart = normalize(part);
+        return getKnownPlatformLabel(normalizedPart)
+          || getKnownFilterLabel('price', normalizedPart)
+          || getKnownFilterLabel('type', normalizedPart)
+          || getKnownFilterLabel('misc', normalizedPart)
+          || getKnownFilterLabel('session_length', normalizedPart)
+          || getKnownFilterLabel('multiplayer', normalizedPart)
+          || getKnownFilterLabel('language', normalizedPart)
+          || part.replace(/^(tag|genre|platform|lang)-/, '').replaceAll('-', ' ');
+      })
       .filter(label => !isIgnoredMetaLabel(label))
       .forEach(label => labels.push(label));
 
@@ -2371,7 +2787,17 @@
       .filter(Boolean)
       .filter(x => x !== 'без фильтров')
       .filter(x => !x.startsWith('sort:'))
-      .map(x => getKnownPlatformLabel(x) || x.replace(/^(tag|genre|platform)-/, '').replaceAll('-', ' '))
+      .map(x => {
+        const normalizedValue = normalize(x);
+        return getKnownPlatformLabel(normalizedValue)
+          || getKnownFilterLabel('price', normalizedValue)
+          || getKnownFilterLabel('type', normalizedValue)
+          || getKnownFilterLabel('misc', normalizedValue)
+          || getKnownFilterLabel('session_length', normalizedValue)
+          || getKnownFilterLabel('multiplayer', normalizedValue)
+          || getKnownFilterLabel('language', normalizedValue)
+          || x.replace(/^(tag|genre|platform|lang)-/, '').replaceAll('-', ' ');
+      })
       .filter(tag => !isIgnoredMetaLabel(tag))
       .forEach(tag => labels.push(tag));
 
@@ -2399,6 +2825,11 @@
       .map(x => getKnownPlatformLabel(String(x || '').trim()))
       .filter(Boolean)
       .forEach(label => labels.push(label));
+
+    const recordTypeLabels = getRecordSectionLabels(record, 'type');
+    if (recordTypeLabels.some(label => normalize(label) === 'html5')) {
+      labels.push('Web');
+    }
 
     return [...new Set(labels.map(x => String(x).trim()).filter(Boolean))];
   }
@@ -2584,9 +3015,10 @@
     const meta = record.meta && typeof record.meta === 'object' ? record.meta : {};
     const series = getRecordSeries(record) || getSearchSeriesFromPath(record.path || '') || 'popular';
     const summaryLabel = String(meta.summaryLabel || '').trim();
-    const tags = Array.isArray(meta.tags) ? meta.tags.filter(Boolean) : [];
-    const genres = Array.isArray(meta.genres) ? meta.genres.filter(Boolean) : [];
-    const platforms = Array.isArray(meta.platforms) ? meta.platforms.filter(Boolean) : [];
+    const sectionLabels = getFilterSectionConfigs().reduce((acc, section) => {
+      acc[section.key] = getRecordSectionLabels(record, section.key);
+      return acc;
+    }, {});
 
     if (isDefaultSummaryRecord(record)) {
       return {
@@ -2605,16 +3037,11 @@
         };
       }
 
-      if (platforms.some(item => normalize(item) === normalize(summaryLabel))) {
-        return { section: 'platforms', label: summaryLabel, series };
-      }
-
-      if (genres.some(item => normalize(item) === normalize(summaryLabel))) {
-        return { section: 'genres', label: summaryLabel, series };
-      }
-
-      if (tags.some(item => normalize(item) === normalize(summaryLabel))) {
-        return { section: 'tags', label: summaryLabel, series };
+      const summarySection = getFilterSectionConfigs().find(section => {
+        return sectionLabels[section.key].some(item => normalize(item) === normalize(summaryLabel));
+      });
+      if (summarySection) {
+        return { section: summarySection.key, label: summaryLabel, series };
       }
     }
 
@@ -2625,35 +3052,25 @@
       : [];
 
     for (const part of filterParts) {
-      if (part.startsWith('genre-')) {
+      const sectionKey = detectFilterSectionKeyFromHref(`https://itch.io/games/${part}`);
+      if (sectionKey) {
+        const sectionConfig = getFilterSectionConfigByKey(sectionKey);
+        const firstLabel = sectionLabels[sectionKey]?.[0] || '';
+        const fallbackLabel = getLabelFromSearchToken(sectionConfig?.type || '', part)
+          || normalizeSectionLabel(sectionKey, part.replace(/^(tag|genre|platform|lang)-/, '').replaceAll('-', ' '));
         return {
-          section: 'genres',
-          label: genres[0] || part.replace(/^genre-/, '').replaceAll('-', ' '),
-          series
-        };
-      }
-
-      if (part.startsWith('tag-')) {
-        return {
-          section: 'tags',
-          label: tags[0] || part.replace(/^tag-/, '').replaceAll('-', ' '),
-          series
-        };
-      }
-
-      const knownPlatform = getKnownPlatformLabel(part);
-      if (part.startsWith('platform-') || knownPlatform) {
-        return {
-          section: 'platforms',
-          label: platforms[0] || knownPlatform || normalizePlatformLabel(part.replace(/^platform-/, '').replaceAll('-', ' ')),
+          section: sectionKey,
+          label: firstLabel || fallbackLabel,
           series
         };
       }
     }
 
-    if (genres[0]) return { section: 'genres', label: genres[0], series };
-    if (platforms[0]) return { section: 'platforms', label: platforms[0], series };
-    if (tags[0]) return { section: 'tags', label: tags[0], series };
+    for (const section of getFilterSectionConfigs()) {
+      if (sectionLabels[section.key]?.[0]) {
+        return { section: section.key, label: sectionLabels[section.key][0], series };
+      }
+    }
 
     return {
       section: 'default',
@@ -2987,9 +3404,7 @@
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if (status) {
-        setSearchStatus(status, isCloudflareChallengePage()
-          ? 'Жду завершения проверки Cloudflare...'
-          : 'Жду полной загрузки списка игр...');
+        setSearchStatus(status, 'Жду полной загрузки списка игр...');
       }
 
       await sleep(500);
@@ -3004,10 +3419,6 @@
 
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (status) {
-        setSearchStatus(status, 'Cloudflare просит проверку. Не скроллю страницу и жду завершения challenge...');
-      }
-
       await sleep(500);
 
       if (!isCloudflareChallengePage()) {
@@ -3172,7 +3583,7 @@
         if (!challengeCleared) {
           searching = false;
           button.textContent = 'Найти и листать';
-          status.textContent = 'Поиск остановлен: Cloudflare слишком долго держит проверку.';
+          status.textContent = 'Поиск остановлен: страница слишком долго не отвечает.';
           return;
         }
 
@@ -3180,7 +3591,7 @@
         if (!pageReadyAfterChallenge) {
           searching = false;
           button.textContent = 'Найти и листать';
-          status.textContent = 'Поиск остановлен: после Cloudflare список игр не загрузился.';
+          status.textContent = 'Поиск остановлен: список игр не загрузился.';
           return;
         }
 
@@ -3728,6 +4139,7 @@
       id: gameId,
       url: location.href,
       name: document.querySelector('.game_title')?.textContent?.trim() || document.querySelector('h1')?.textContent?.trim() || document.title.trim(),
+      sections: getEmptyMetaSections(),
       genres: [],
       platforms: [],
       tags: [],
@@ -3741,11 +4153,11 @@
     const typedLinkSections = new Map();
 
     for (const row of rows) {
-      const type = detectMetaType(row);
-      if (!type) continue;
+      const sectionKey = detectMetaType(row);
+      if (!sectionKey) continue;
 
       [...row.querySelectorAll('a[href]')].forEach(link => {
-        typedLinkSections.set(link, type);
+        typedLinkSections.set(link, sectionKey);
       });
     }
 
@@ -3755,19 +4167,24 @@
       const href = link.getAttribute('href') || '';
       const value = String(link.textContent || '').trim();
       if (!value) continue;
-      const forcedType = typedLinkSections.get(link) || '';
+      const forcedType = typedLinkSections.get(link) || detectFilterSectionKeyFromHref(href, value) || '';
+      if (!forcedType || !result.sections[forcedType]) continue;
 
-      if (forcedType === 'genres' || (!forcedType && (href.includes('/games/genre-') || href.includes('genre-')))) {
-        result.genres.push(value);
-        result.genreLinks.push({ label: value, href: toAbsoluteItchUrl(href) });
-      }
-      if (forcedType === 'platforms' || (!forcedType && (href.includes('/games/platform-') || href.includes('platform-') || href.includes('/games/html5')))) {
-        result.platforms.push(normalizePlatformLabel(value));
-        result.platformLinks.push({ label: normalizePlatformLabel(value), href: toAbsoluteItchUrl(href) });
-      }
-      if (forcedType === 'tags' || (!forcedType && (href.includes('/games/tag-') || href.includes('tag-')))) {
-        result.tags.push(value);
-        result.tagLinks.push({ label: value, href: toAbsoluteItchUrl(href) });
+      const normalizedLabel = normalizeSectionLabel(forcedType, value);
+      if (!normalizedLabel) continue;
+
+      result.sections[forcedType].labels.push(normalizedLabel);
+      result.sections[forcedType].links.push({
+        label: normalizedLabel,
+        href: toAbsoluteItchUrl(href)
+      });
+
+      if (forcedType === 'type' && normalize(normalizedLabel) === 'html5') {
+        result.sections.platforms.labels.push('Web');
+        result.sections.platforms.links.push({
+          label: 'Web',
+          href: 'https://itch.io/games/platform-web'
+        });
       }
     }
 
@@ -3783,15 +4200,17 @@
 
       const labelText = normalize(labelCandidates.map(node => node.textContent || '').join(' ').trim());
       if (labelText === 'content' || labelText.startsWith('content ')) return '';
-      if (labelText.includes('genre')) return 'genres';
-      if (labelText.includes('platform')) return 'platforms';
-      if (labelText.includes('tag')) return 'tags';
+      const labelSection = Object.entries(FILTER_SECTION_LABEL_ALIASES).find(([, aliases]) => {
+        return aliases.some(alias => labelText.includes(normalize(alias)));
+      });
+      if (labelSection) return labelSection[0];
 
       const fullText = normalize(row.textContent);
       if (fullText === 'content' || fullText.startsWith('content ')) return '';
-      if (fullText.includes('genre')) return 'genres';
-      if (fullText.includes('platform')) return 'platforms';
-      if (fullText.includes('tag')) return 'tags';
+      const fullTextSection = Object.entries(FILTER_SECTION_LABEL_ALIASES).find(([, aliases]) => {
+        return aliases.some(alias => fullText.includes(normalize(alias)));
+      });
+      if (fullTextSection) return fullTextSection[0];
 
       return '';
     }
@@ -3812,7 +4231,7 @@
       if (linkValues.length) return linkValues;
 
       const rawText = String(container.innerText || container.textContent || '')
-        .replace(/^(genres?|platforms?|tags?)\s*:?\s*/i, '')
+        .replace(/^(genres?|platforms?|tags?|price|type|misc|languages?|average session length|multiplayer features?)\s*:?\s*/i, '')
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -3826,23 +4245,60 @@
     }
 
     for (const row of rows) {
-      const type = detectMetaType(row);
-      if (!type) continue;
-      result[type].push(...extractRowValues(row, type));
+      const sectionKey = detectMetaType(row);
+      if (!sectionKey || !result.sections[sectionKey]) continue;
+      extractRowValues(row, sectionKey).forEach(value => {
+        const normalizedLabel = normalizeSectionLabel(sectionKey, value);
+        if (normalizedLabel) result.sections[sectionKey].labels.push(normalizedLabel);
+      });
     }
 
-    result.genres = normalizeLabelList(result.genres.filter(value => !isIgnoredMetaLabel(value)));
-    result.platforms = normalizeLabelList(result.platforms.filter(value => !isIgnoredMetaLabel(value)));
+    if (root?.querySelector('.play_game_btn, .launch_btn, iframe[src*="html5"], .iframe_placeholder')) {
+      result.sections.type.labels.push('HTML5');
+      result.sections.platforms.labels.push('Web');
+    }
+
+    if (root?.querySelector('.download_btn, a[href*="/file/"], a[href*="/download"]')) {
+      result.sections.type.labels.push('Downloadable');
+    }
+
+    const purchaseText = normalize(root?.querySelector('.purchase_banner_widget, .buy_row, .buy_message, .button_message, .game_purchase_price')?.textContent || '');
+    if (purchaseText) {
+      if (purchaseText.includes('free') || purchaseText.includes('0.00') || purchaseText.includes('name your own price')) {
+        result.sections.price.labels.push('Free');
+      }
+      if (purchaseText.includes('% off') || purchaseText.includes('sale')) {
+        result.sections.price.labels.push('On Sale');
+      }
+      if (/\$\s*\d/.test(purchaseText) || purchaseText.includes('usd')) {
+        result.sections.price.labels.push('Paid');
+      }
+    }
+
+    getFilterSectionConfigs().forEach(section => {
+      result.sections[section.key].labels = normalizeLabelList(
+        result.sections[section.key].labels.filter(value => !isIgnoredMetaLabel(value))
+      );
+      result.sections[section.key].links = backfillMissingLinkEntries(
+        section.type,
+        result.sections[section.key].labels,
+        result.sections[section.key].links
+      );
+    });
+
+    result.genres = result.sections.genres.labels;
+    result.platforms = result.sections.platforms.labels;
     const sideMetaLabels = new Set([
       ...result.genres,
       ...result.platforms
     ].map(value => normalize(value)));
-    result.tags = normalizeLabelList(result.tags
-      .filter(value => !isIgnoredMetaLabel(value))
+    result.tags = normalizeLabelList(result.sections.tags.labels
       .filter(value => !sideMetaLabels.has(normalize(value))));
-    result.genreLinks = backfillMissingLinkEntries('genre', result.genres, result.genreLinks);
-    result.platformLinks = backfillMissingLinkEntries('platform', result.platforms, result.platformLinks);
-    result.tagLinks = backfillMissingLinkEntries('tag', result.tags, result.tagLinks);
+    result.sections.tags.labels = result.tags;
+    result.sections.tags.links = backfillMissingLinkEntries('tag', result.tags, result.sections.tags.links);
+    result.genreLinks = result.sections.genres.links;
+    result.platformLinks = result.sections.platforms.links;
+    result.tagLinks = result.sections.tags.links;
 
     return result;
   }
@@ -3890,7 +4346,7 @@
       return;
     }
 
-    if (returnUrl && (meta.genres.length || meta.platforms.length || meta.tags.length)) {
+    if (returnUrl) {
       setTransferredMeta(meta);
       location.href = returnUrl;
     }
@@ -4000,10 +4456,7 @@
   }
 
   function hasRecordModifiers(record) {
-    const tags = Array.isArray(record?.meta?.tags) ? record.meta.tags : [];
-    const genres = Array.isArray(record?.meta?.genres) ? record.meta.genres : [];
-    const platforms = Array.isArray(record?.meta?.platforms) ? record.meta.platforms : [];
-    return !!(tags.length || genres.length || platforms.length);
+    return getFilterSectionConfigs().some(section => getRecordSectionLabels(record, section.key).length > 0);
   }
 
   function isDefaultSummaryRecord(record) {
@@ -4028,7 +4481,9 @@
       return seriesRecords.filter(record => normalize(record?.meta?.summaryLabel) === wanted);
     }
 
-    return findRecordsForLabel(seriesRecords, item.label);
+    return seriesRecords.filter(record => {
+      return getRecordSectionLabels(record, item.section).some(label => normalize(label) === normalize(item.label));
+    });
   }
 
   function dedupeRefreshItems(items) {
@@ -4248,14 +4703,14 @@
 
   let chartClipPathSequence = 0;
 
-  function getChartClipPathMarkup(margin, plotWidth, plotHeight) {
+  function getChartClipPathMarkup(margin, plotWidth, plotHeight, padding = 10) {
     const id = `tm-stat-chart-clip-${chartClipPathSequence += 1}`;
     return {
       id,
       markup: `
         <defs>
           <clipPath id="${id}">
-            <rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}"></rect>
+            <rect x="${margin.left - padding}" y="${margin.top - padding}" width="${plotWidth + (padding * 2)}" height="${plotHeight + (padding * 2)}"></rect>
           </clipPath>
         </defs>
       `
@@ -4432,6 +4887,7 @@
 
     return series.map((item, index) => {
       const color = item.color || palette[index % palette.length] || '#4A8CFF';
+      const seriesKey = String(item.key || `${index}`);
       const backgroundPath = buildNeighborSegmentsPath(item.points, getX, getY);
       const smoothPath = buildSmoothBezierPath(item.points, getX, getY);
       const trendPaths = showTrends ? buildTrendPaths(item.points, getX, getY, durationDays, trendState) : [];
@@ -4439,16 +4895,16 @@
         if (!point) return '';
         const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
         return `
-          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
+          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" data-chart-series-key="${escapeHtml(seriesKey)}" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
             <title>${escapeHtml(title)}</title>
           </circle>
         `;
       }).join('');
 
       return `
-        ${backgroundPath ? `<path class="tm-stat-chart-line-bg" d="${backgroundPath}" stroke="${color}"></path>` : ''}
-        ${trendPaths.map(trend => `<path class="tm-stat-chart-trend ${trend.kind === 'ma' ? 'tm-stat-chart-trend-ma' : ''}" d="${trend.path}" stroke="${color}"></path>`).join('')}
-        ${smoothPath ? `<path class="tm-stat-chart-line" d="${smoothPath}" stroke="${color}"></path>` : ''}
+        ${backgroundPath ? `<path class="tm-stat-chart-line-bg" data-chart-series-key="${escapeHtml(seriesKey)}" d="${backgroundPath}" stroke="${color}"></path>` : ''}
+        ${trendPaths.map(trend => `<path class="tm-stat-chart-trend ${trend.kind === 'ma' ? 'tm-stat-chart-trend-ma' : ''}" data-chart-series-key="${escapeHtml(seriesKey)}" d="${trend.path}" stroke="${color}"></path>`).join('')}
+        ${smoothPath ? `<path class="tm-stat-chart-line" data-chart-series-key="${escapeHtml(seriesKey)}" d="${smoothPath}" stroke="${color}"></path>` : ''}
         ${circles}
       `;
     }).join('');
@@ -4471,6 +4927,8 @@
     const margin = { top: 8, right: 12, bottom: 28, left: 44 };
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
+    const visualPadding = 10;
+    const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
     const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
     if (!values.length) {
       return `<div class="tm-stat-muted tm-stat-chart">No exact rank data for the last 7 days.</div>`;
@@ -4486,7 +4944,7 @@
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
     const getY = value => {
       const ratio = (value - minValue) / (maxValue - minValue);
-      return margin.top + ratio * plotHeight;
+      return margin.top + visualPadding + ratio * innerPlotHeight;
     };
 
     const tickValues = [0, 1, 2, 3].map(step => {
@@ -4512,7 +4970,7 @@
       durationDays: Math.max(1, days.length),
       palette
     });
-    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight);
+    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight, visualPadding);
 
     const legendMarkup = series.map((item, index) => {
       const color = palette[index % palette.length];
@@ -4693,6 +5151,8 @@
     const margin = { top: 8, right: 12, bottom: 28, left: 44 };
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
+    const visualPadding = 10;
+    const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
     const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
 
     if (!values.length) {
@@ -4708,7 +5168,7 @@
     }
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
-    const getY = value => margin.top + ((value - minValue) / (maxValue - minValue)) * plotHeight;
+    const getY = value => margin.top + visualPadding + ((value - minValue) / (maxValue - minValue)) * innerPlotHeight;
     const tickValues = [0, 1, 2, 3].map(step => Math.round(minValue + (maxValue - minValue) * (step / 3)));
 
     const gridLines = tickValues.map(value => {
@@ -4730,7 +5190,7 @@
       showTrends: true,
       trendState
     });
-    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight);
+    const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight, visualPadding);
 
     const hoverZones = days.map((day, index) => {
       const prevX = index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2;
@@ -4739,7 +5199,7 @@
     }).join('');
 
     const legendMarkup = series.map(item => `
-      <div class="tm-stat-chart-legend-item" title="${escapeHtml(item.label)}">
+      <div class="tm-stat-chart-legend-item" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
         <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
         <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
       </div>
@@ -4770,12 +5230,29 @@
 
     const svg = body.querySelector('.tm-stat-chart-svg');
     const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
+    let activeLegendSeriesKey = '';
 
     function highlightChartPoints(activeIndex = null) {
       body.querySelectorAll('[data-chart-point-index]').forEach(point => {
         const pointIndex = Number(point.getAttribute('data-chart-point-index'));
-        point.classList.toggle('tm-dimmed', activeIndex !== null && pointIndex !== activeIndex);
+        point.classList.toggle('tm-day-dimmed', activeIndex !== null && pointIndex !== activeIndex);
       });
+    }
+
+    function applySeriesHighlight(seriesKey = '') {
+      activeLegendSeriesKey = String(seriesKey || '');
+      body.querySelectorAll('[data-chart-series-key]').forEach(node => {
+        const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
+        node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
+        node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+      });
+      if (tooltip) {
+        tooltip.querySelectorAll('[data-chart-series-key]').forEach(node => {
+          const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
+          node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
+          node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+        });
+      }
     }
 
     function hideTooltip() {
@@ -4785,6 +5262,7 @@
       }
       if (hoverLine) hoverLine.setAttribute('visibility', 'hidden');
       highlightChartPoints();
+      applySeriesHighlight(activeLegendSeriesKey);
     }
 
     body.querySelectorAll('[data-chart-day-index]').forEach(zone => {
@@ -4794,6 +5272,7 @@
         const day = days[index];
         highlightChartPoints(index);
         const rows = series.map(item => ({
+          key: item.key,
           label: item.label,
           color: item.color,
           point: item.points[index]
@@ -4820,7 +5299,7 @@
         tooltip.innerHTML = `
           <div class="tm-stat-chart-tooltip-day">${escapeHtml(day.fullLabel || day.label)}</div>
           ${rows.map(row => `
-            <div class="tm-stat-chart-tooltip-row">
+            <div class="tm-stat-chart-tooltip-row" data-chart-series-key="${escapeHtml(row.key)}">
               <span class="tm-stat-chart-tooltip-dot" style="background:${row.color}"></span>
               <span class="tm-stat-chart-tooltip-label" title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>
               <span class="tm-stat-chart-tooltip-value">${row.point ? `#${row.point.value}` : '--'}</span>
@@ -4833,6 +5312,7 @@
         tooltip.style.left = `${Math.min(Math.max(plotX + 12, 8), Math.max(8, rect.width - 228))}px`;
         tooltip.style.top = `44px`;
         tooltip.classList.add('tm-visible');
+        applySeriesHighlight(activeLegendSeriesKey);
       });
 
       zone.addEventListener('mouseleave', hideTooltip);
@@ -4853,19 +5333,31 @@
       });
     });
 
+    body.querySelectorAll('.tm-stat-chart-legend-item[data-chart-series-key]').forEach(item => {
+      const seriesKey = item.getAttribute('data-chart-series-key') || '';
+      const activate = () => applySeriesHighlight(seriesKey);
+      const deactivate = () => applySeriesHighlight('');
+      item.addEventListener('mouseenter', activate);
+      item.addEventListener('focus', activate);
+      item.addEventListener('mouseleave', deactivate);
+      item.addEventListener('blur', deactivate);
+    });
+
     body.addEventListener('mouseleave', hideTooltip);
   }
 
   function sortRefreshItems(items, records) {
     function getPriority(item) {
       const hasRecords = getQueueItemRecords(records, item).length > 0;
+      const sectionOrder = getFilterSectionConfigs().reduce((acc, section, index) => {
+        acc[section.key] = index + 1;
+        return acc;
+      }, {});
 
       if (item.section === 'default' && hasRecords) return 100;
       if (item.section === 'default') return 10;
       if (item.section === 'intersections') return 0;
-      if (item.section === 'platforms') return 1;
-      if (item.section === 'genres') return 2;
-      if (item.section === 'tags') return 3;
+      if (sectionOrder[item.section]) return sectionOrder[item.section];
       return 50;
     }
 
@@ -4929,88 +5421,34 @@
     }
 
     const mainLabels = SEARCH_SERIES.map(item => item.label);
-    const metaGenres = Array.isArray(meta?.genres) ? meta.genres : [];
-    const metaPlatforms = Array.isArray(meta?.platforms) ? meta.platforms : [];
-    const metaTags = Array.isArray(meta?.tags) ? meta.tags : [];
-    const metaGenreLinks = Array.isArray(meta?.genreLinks) ? meta.genreLinks : [];
-    const metaPlatformLinks = Array.isArray(meta?.platformLinks) ? meta.platformLinks : [];
-    const metaTagLinks = Array.isArray(meta?.tagLinks) ? meta.tagLinks : [];
+    const sectionsData = getFilterSectionConfigs().reduce((acc, section) => {
+      const sectionLinks = getRecordSectionLinks(meta, section.key);
+      const canonicalLabels = normalizeLabelList(
+        getRecordSectionLabels({ meta }, section.key).map(label => canonicalizeLabelWithLinks(section.type, label, sectionLinks))
+      );
 
-    const recordGenres = records.flatMap(record => {
-      return Array.isArray(record.meta?.genres)
-        ? record.meta.genres.map(label => canonicalizeLabelWithLinks('genre', label, metaGenreLinks))
-        : [];
-    });
+      if (section.key === 'platforms' && canonicalLabels.some(label => normalize(label) === 'web') && !canonicalLabels.some(label => normalize(label) === 'mobile web')) {
+        canonicalLabels.push('Mobile Web');
+      }
 
-    const recordPlatforms = records.flatMap(record => {
-      return Array.isArray(record.meta?.platforms)
-        ? record.meta.platforms.map(label => canonicalizeLabelWithLinks('platform', label, metaPlatformLinks))
-        : [];
-    });
-    const recordContextPlatforms = records.flatMap(record => {
-      return getPlatformLabelsFromRecordContext(record)
-        .map(label => canonicalizeLabelWithLinks('platform', label, metaPlatformLinks));
-    });
-
-    const recordTags = records.flatMap(record => {
-      return Array.isArray(record.meta?.tags)
-        ? record.meta.tags.map(label => canonicalizeLabelWithLinks('tag', label, metaTagLinks))
-        : [];
-    });
-
-    const allRecordLabels = records.flatMap(record => getSearchLabelsFromRecord(record));
-
-    const genreLabels = normalizeLabelList([
-      metaGenres.map(label => canonicalizeLabelWithLinks('genre', label, metaGenreLinks)),
-      recordGenres
-    ]);
-
-    const platformLabels = normalizeLabelList([
-      metaPlatforms.map(label => canonicalizeLabelWithLinks('platform', label, metaPlatformLinks)),
-      recordPlatforms,
-      recordContextPlatforms
-    ]);
-    if (platformLabels.some(label => normalize(label) === 'web') && !platformLabels.some(label => normalize(label) === 'mobile web')) {
-      platformLabels.push('Mobile Web');
-    }
+      acc[section.key] = {
+        labels: canonicalLabels,
+        links: buildFilterLinkEntries(section.type, canonicalLabels, sectionLinks)
+      };
+      return acc;
+    }, {});
 
     const knownSideLabels = new Set([
       ...mainLabels,
-      ...genreLabels,
-      ...platformLabels
+      ...sectionsData.genres.labels,
+      ...sectionsData.platforms.labels
     ].map(x => normalize(x)));
-
-    const canonicalMetaTags = normalizeLabelList(
-      metaTags.map(label => canonicalizeLabelWithLinks('tag', label, metaTagLinks))
-    );
-    const canonicalMetaTagSet = new Set(canonicalMetaTags.map(label => normalize(label)));
-
-    const searchTagLabels = allRecordLabels
-      .filter(label => !knownSideLabels.has(normalize(label)))
-      .map(label => canonicalizeLabelWithLinks('tag', label, metaTagLinks));
-
-    const tagSources = canonicalMetaTags.length
-      ? [
-        canonicalMetaTags,
-        recordTags.filter(label => canonicalMetaTagSet.has(normalize(label))),
-        searchTagLabels.filter(label => canonicalMetaTagSet.has(normalize(label)))
-      ]
-      : [
-        canonicalMetaTags,
-        recordTags,
-        searchTagLabels
-      ];
-
-    const tagLabels = normalizeLabelList(tagSources)
-      .filter(label => !isIgnoredMetaLabel(label))
+    sectionsData.tags.labels = sectionsData.tags.labels
       .filter(label => !knownSideLabels.has(normalize(label)));
+    sectionsData.tags.links = buildFilterLinkEntries('tag', sectionsData.tags.labels, sectionsData.tags.links);
 
     const metaUrl = meta?.url || '';
     const publicBaseUrl = game?.href || metaUrl;
-
-    const genreLinks = buildFilterLinkEntries('genre', genreLabels, metaGenreLinks);
-    const platformLinks = buildFilterLinkEntries('platform', platformLabels, metaPlatformLinks);
-    const tagLinks = buildFilterLinkEntries('tag', tagLabels, metaTagLinks);
 
     return {
       possibleKeys,
@@ -5018,13 +5456,14 @@
       meta,
       records,
       mainLabels,
-      genreLabels,
-      platformLabels,
-      tagLabels,
+      sectionsData,
+      genreLabels: sectionsData.genres.labels,
+      platformLabels: sectionsData.platforms.labels,
+      tagLabels: sectionsData.tags.labels,
       publicBaseUrl,
-      genreLinks,
-      platformLinks,
-      tagLinks,
+      genreLinks: sectionsData.genres.links,
+      platformLinks: sectionsData.platforms.links,
+      tagLinks: sectionsData.tags.links,
       intersections: getGameIntersections(game)
     };
   }
@@ -5032,6 +5471,15 @@
   function buildRefreshQueue(game) {
     const data = getSummaryData(game);
     const enabledSeries = getEnabledSummarySeries();
+    const sectionRefreshItems = getFilterSectionConfigs().flatMap(section => {
+      const links = Array.isArray(data.sectionsData?.[section.key]?.links) ? data.sectionsData[section.key].links : [];
+      return links.flatMap(item => enabledSeries.map(series => ({
+        section: section.key,
+        label: item.label,
+        series,
+        url: buildSeriesUrl(series, item.href)
+      })));
+    });
     const items = dedupeRefreshItems([
       ...enabledSeries.map(series => ({
         section: 'default',
@@ -5039,24 +5487,7 @@
         series,
         url: buildSeriesUrl(series, 'https://itch.io/games')
       })),
-      ...data.platformLinks.flatMap(item => enabledSeries.map(series => ({
-        section: 'platforms',
-        label: item.label,
-        series,
-        url: buildSeriesUrl(series, item.href)
-      }))),
-      ...data.genreLinks.flatMap(item => enabledSeries.map(series => ({
-        section: 'genres',
-        label: item.label,
-        series,
-        url: buildSeriesUrl(series, item.href)
-      }))),
-      ...data.tagLinks.flatMap(item => enabledSeries.map(series => ({
-        section: 'tags',
-        label: item.label,
-        series,
-        url: buildSeriesUrl(series, item.href)
-      }))),
+      ...sectionRefreshItems,
       ...data.intersections.flatMap(item => enabledSeries.map(series => ({
         section: 'intersections',
         label: item.label,
@@ -5163,13 +5594,8 @@
     const {
       possibleKeys,
       records,
-      genreLabels,
-      platformLabels,
-      tagLabels,
+      sectionsData,
       publicBaseUrl,
-      genreLinks,
-      platformLinks,
-      tagLinks,
       intersections
     } = getSummaryData(game);
     const publicGameUrl = publicBaseUrl
@@ -5272,22 +5698,29 @@
         .filter(item => item.href);
     }
 
-    const selectableOptions = [
-      ...createFilterOptions('platform', platformLabels, platformLinks),
-      ...createFilterOptions('genre', genreLabels, genreLinks),
-      ...createFilterOptions('tag', tagLabels, tagLinks)
-    ];
-    const platformHrefByLabel = new Map(platformLinks.map(item => [normalize(item.label), item.href]));
-    const genreHrefByLabel = new Map(genreLinks.map(item => [normalize(item.label), item.href]));
-    const tagHrefByLabel = new Map(tagLinks.map(item => [normalize(item.label), item.href]));
+    const filterSections = getFilterSectionConfigs();
+    const selectableOptions = filterSections.flatMap(section => {
+      const sectionData = sectionsData?.[section.key] || { labels: [], links: [] };
+      return createFilterOptions(section.type, sectionData.labels, sectionData.links).map(item => ({
+        ...item,
+        sectionKey: section.key
+      }));
+    });
+    const sectionHrefByLabel = filterSections.reduce((acc, section) => {
+      acc[section.key] = new Map(
+        (sectionsData?.[section.key]?.links || []).map(item => [normalize(item.label), item.href])
+      );
+      return acc;
+    }, {});
     const intersectionHrefByLabel = new Map(intersections.map(item => [normalize(item.label), item.popularUrl]));
 
     function getSummaryBaseHref(section, label) {
       const key = normalize(label);
       if (section === 'default') return 'https://itch.io/games';
-      if (section === 'platforms') return platformHrefByLabel.get(key) || buildSearchUrlForLabel('platform', label);
-      if (section === 'genres') return genreHrefByLabel.get(key) || buildSearchUrlForLabel('genre', label);
-      if (section === 'tags') return tagHrefByLabel.get(key) || buildSearchUrlForLabel('tag', label);
+      const sectionConfig = getFilterSectionConfigByKey(section);
+      if (sectionConfig) {
+        return sectionHrefByLabel[section]?.get(key) || buildSearchUrlForLabel(sectionConfig.type, label);
+      }
       if (section === 'intersections') return intersectionHrefByLabel.get(key) || '';
       return '';
     }
@@ -5351,13 +5784,16 @@
       }
 
       return rows.map(row => {
-        const selectKey = options.getSelectKey ? options.getSelectKey(row) : '';
-        const selectType = selectKey.split('|')[0] || '';
-        const inputType = options.singleSelect ? 'radio' : 'checkbox';
-        const inputName = options.singleSelect ? `tm-select-${selectType}` : '';
+        const selectMeta = options.getSelectMeta ? options.getSelectMeta(row) : null;
         const selectCell = options.selectable ? `
           <td class="tm-stat-select-col">
-            <input class="tm-stat-checkbox" type="${inputType}" ${inputName ? `name="${escapeHtml(inputName)}"` : ''} data-select-key="${escapeHtml(selectKey)}" data-select-type="${escapeHtml(selectType)}">
+            <input
+              class="tm-stat-checkbox"
+              type="${escapeHtml(selectMeta?.inputType || 'checkbox')}"
+              ${selectMeta?.inputName ? `name="${escapeHtml(selectMeta.inputName)}"` : ''}
+              data-select-key="${escapeHtml(selectMeta?.selectKey || '')}"
+              data-select-type="${escapeHtml(selectMeta?.selectType || '')}"
+            >
           </td>
         ` : '<td class="tm-stat-select-col tm-stat-placeholder-cell"></td>';
 
@@ -5415,20 +5851,21 @@
     }
 
     const defaultRows = [buildRow('Top', 'default')];
-    const platformRows = buildRows(platformLabels, 'platforms');
-    const genreRows = buildRows(genreLabels, 'genres');
-    const tagRows = buildRows(tagLabels, 'tags');
+    const sectionRowsByKey = filterSections.reduce((acc, section) => {
+      acc[section.key] = buildRows(sectionsData?.[section.key]?.labels || [], section.key);
+      return acc;
+    }, {});
     const intersectionRows = intersections.map(item => buildRow(item.label, 'intersections', {
       id: item.id || ''
     }));
 
-    const chartDataByKey = {
+    const chartDataByKey = filterSections.reduce((acc, section) => {
+      acc[section.key] = getSectionToggleChartData(records, section.key, sectionRowsByKey[section.key].map(row => row.label));
+      return acc;
+    }, {
       default: getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label)),
-      platforms: getSectionToggleChartData(records, 'platforms', platformRows.map(row => row.label)),
-      genres: getSectionToggleChartData(records, 'genres', genreRows.map(row => row.label)),
-      tags: getSectionToggleChartData(records, 'tags', tagRows.map(row => row.label)),
       intersections: getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
-    };
+    });
 
     const seriesToggleHtml = ANALYTICS_SERIES.map(item => `
       <label class="tm-series-toggle">
@@ -5436,6 +5873,42 @@
         <span class="tm-series-toggle-label">${escapeHtml(item.label)}</span>
       </label>
     `).join('');
+
+    const filterSectionsHtml = filterSections.map(section => {
+      function getSelectMeta(row) {
+        const normalizedLabel = normalize(row.label);
+        if (section.selection === 'single') {
+          return {
+            selectKey: `${section.type}|${normalizedLabel}`,
+            selectType: section.type,
+            inputType: 'radio',
+            inputName: `tm-select-${section.key}`
+          };
+        }
+
+        if (section.selection === 'price') {
+          const isPriceBase = getPriceBaseSelectionLabels().some(label => normalize(label) === normalizedLabel);
+          return {
+            selectKey: `${section.type}|${normalizedLabel}`,
+            selectType: isPriceBase ? 'price-base' : 'price-extra',
+            inputType: isPriceBase ? 'radio' : 'checkbox',
+            inputName: isPriceBase ? 'tm-select-price-base' : ''
+          };
+        }
+
+        return {
+          selectKey: `${section.type}|${normalizedLabel}`,
+          selectType: section.type,
+          inputType: 'checkbox',
+          inputName: ''
+        };
+      }
+
+      return sectionHtml(section.key, section.title, sectionRowsByKey[section.key], {
+        selectable: true,
+        getSelectMeta
+      });
+    }).join('');
 
     widget.innerHTML = `
       <div class="tm-widget-head">
@@ -5452,20 +5925,7 @@
         </div>
 
         ${sectionHtml('default', 'Общее', defaultRows)}
-        ${sectionHtml('platforms', 'Платформы', platformRows, {
-          selectable: true,
-          singleSelect: true,
-          getSelectKey: row => `platform|${normalize(row.label)}`
-        })}
-        ${sectionHtml('genres', 'Жанры', genreRows, {
-          selectable: true,
-          singleSelect: true,
-          getSelectKey: row => `genre|${normalize(row.label)}`
-        })}
-        ${sectionHtml('tags', 'Теги', tagRows, {
-          selectable: true,
-          getSelectKey: row => `tag|${normalize(row.label)}`
-        })}
+        ${filterSectionsHtml}
         ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
           allowDelete: true
         })}
