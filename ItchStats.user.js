@@ -7,6 +7,7 @@
 // @match        https://*.itch.io/*
 // @author       Nnican
 // @license      MIT
+// @tag          utilities
 // @homepageURL  https://github.com/NnicanBuak/itch-stats
 // @compatible   tampermonkey Tampermonkey
 // @grant        none
@@ -224,6 +225,43 @@
     return getFilterSectionConfigByType(type)?.key || '';
   }
 
+  function getSummarySectionStorageKeys() {
+    return ['default', ...getFilterSectionConfigs().map(section => section.key), 'intersections'];
+  }
+
+  function getDefaultSummarySectionState(key) {
+    const normalizedKey = String(key || '').trim();
+    const enabled = normalizedKey !== 'misc';
+    return {
+      enabled,
+      collapsed: !enabled
+    };
+  }
+
+  function normalizeSummarySectionStateEntry(key, value) {
+    const defaults = getDefaultSummarySectionState(key);
+
+    if (typeof value === 'boolean') {
+      return {
+        enabled: defaults.enabled,
+        collapsed: value
+      };
+    }
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return defaults;
+    }
+
+    return {
+      enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
+      collapsed: typeof value.collapsed === 'boolean' ? value.collapsed : defaults.collapsed
+    };
+  }
+
+  function getSummarySectionStateEntry(state, key) {
+    return normalizeSummarySectionStateEntry(key, state?.[key]);
+  }
+
   function getEmptyMetaSections() {
     return FILTER_SECTION_DEFINITIONS.reduce((acc, item) => {
       acc[item.key] = {
@@ -236,6 +274,27 @@
 
   function getPriceBaseSelectionLabels() {
     return ['Free', 'Paid', '$5 or less', '$15 or less'];
+  }
+
+  function getKnownFilterLabels(type) {
+    const normalizedType = normalize(type);
+    if (!normalizedType) return [];
+
+    if (normalizedType === 'platform') {
+      return ['Windows', 'macOS', 'Linux', 'Android', 'iOS', 'Web', 'Mobile Web'];
+    }
+
+    if (normalizedType === 'genre' || normalizedType === 'tag') {
+      return [];
+    }
+
+    return Object.keys(FILTER_LABEL_TO_TOKEN[normalizedType] || {})
+      .map(label => FILTER_DISPLAY_LABELS[normalizedType]?.[label] || label)
+      .map(label => {
+        const sectionKey = getFilterSectionKeyByType(normalizedType);
+        return sectionKey ? normalizeSectionLabel(sectionKey, label) : String(label || '').trim();
+      })
+      .filter(Boolean);
   }
 
   const style = document.createElement('style');
@@ -321,6 +380,27 @@
       user-select: none;
     }
 
+    .tm-stat-section-title-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .tm-stat-section-title-text {
+      min-width: 0;
+    }
+
+    .tm-stat-section-enable {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      accent-color: #fff;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+
     .tm-stat-section {
       margin-bottom: 8px;
     }
@@ -331,6 +411,20 @@
       max-height: 2000px;
       transition: max-height .28s ease, opacity .22s ease, margin-top .28s ease;
       will-change: max-height, opacity;
+    }
+
+    .tm-stat-section-body.tm-disabled {
+      opacity: .42;
+      filter: grayscale(.9);
+    }
+
+    .tm-stat-section-body.tm-disabled .tm-stat-table-wrap,
+    .tm-stat-section-body.tm-disabled [data-chart-root] {
+      pointer-events: none;
+    }
+
+    .tm-stat-section-body.tm-disabled .tm-stat-muted {
+      opacity: .95;
     }
 
     .tm-stat-section-body.tm-hidden {
@@ -1613,11 +1707,20 @@
   function loadSummarySectionState() {
     const raw = localStorage.getItem(STORAGE_KEY_SUMMARY_SECTIONS);
     const parsed = safeJsonParse(raw, {});
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    const source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+
+    return getSummarySectionStorageKeys().reduce((acc, key) => {
+      acc[key] = normalizeSummarySectionStateEntry(key, source[key]);
+      return acc;
+    }, {});
   }
 
   function saveSummarySectionState(data) {
-    localStorage.setItem(STORAGE_KEY_SUMMARY_SECTIONS, JSON.stringify(data || {}));
+    const next = getSummarySectionStorageKeys().reduce((acc, key) => {
+      acc[key] = normalizeSummarySectionStateEntry(key, data?.[key]);
+      return acc;
+    }, {});
+    localStorage.setItem(STORAGE_KEY_SUMMARY_SECTIONS, JSON.stringify(next));
   }
 
   function loadSummarySeriesState() {
@@ -1798,6 +1901,21 @@
       ? meta.importedHiddenSections[sectionKey].map(label => normalizeSectionLabel(sectionKey, label))
       : [];
     return normalizeLabelList([liveLabels, importedLabels]);
+  }
+
+  function getDerivedSectionLabelsForSummary(records = [], sectionKey = '') {
+    const sectionConfig = getFilterSectionConfigByKey(sectionKey);
+    if (!sectionConfig) return [];
+
+    const knownLabels = getKnownFilterLabels(sectionConfig.type);
+    if (!knownLabels.length) return [];
+
+    const knownSet = new Set(knownLabels.map(normalize));
+    return normalizeLabelList(records.flatMap(record => {
+      return getSearchLabelsFromRecord(record)
+        .map(label => normalizeSectionLabel(sectionKey, label))
+        .filter(label => knownSet.has(normalize(label)));
+    }));
   }
 
   function getCurrentGameDataset(game, summaryData = null) {
@@ -3446,6 +3564,24 @@
     playConfettiFromElement(info || card);
   }
 
+  function getSearchModeOptions(refreshActive = false) {
+    return refreshActive
+      ? {
+        fastScroll: true,
+        tailStep: Math.max(window.innerHeight, SCROLL_STEP),
+        extraTailStep: Math.max(SCROLL_STEP, Math.round(window.innerHeight * 0.9)),
+        jumpPauseMs: 80,
+        pageAdvanceTimeoutMs: 7000
+      }
+      : {
+        fastScroll: false,
+        tailStep: Math.max(Math.round(window.innerHeight * 0.72), Math.round(SCROLL_STEP * 0.55)),
+        extraTailStep: Math.max(Math.round(window.innerHeight * 0.45), Math.round(SCROLL_STEP * 0.38)),
+        jumpPauseMs: 220,
+        pageAdvanceTimeoutMs: 12000
+      };
+  }
+
   function getStoredRecordsForGame(game) {
     if (!game) return [];
 
@@ -3503,7 +3639,7 @@
     return scored[0]?.record || null;
   }
 
-  async function jumpToLastLoadedGame(game, status = null) {
+  async function jumpToLastLoadedGame(game, status = null, options = {}) {
     const record = getBestStoredRecordForCurrentSearch(game);
     if (!record) return false;
 
@@ -3521,53 +3657,109 @@
 
     if (status) {
       setSearchStatus(status, [
-        'Перехожу к последней загруженной игре...',
+        options.fastScroll ? 'Перехожу к последней загруженной игре...' : 'Плавно перехожу к последней загруженной игре...',
         `Пролистано игр: ${Math.min(rememberedIndex, cards.length)}`
       ]);
     }
 
     anchorCard.scrollIntoView({
-      behavior: 'auto',
-      block: 'end'
+      behavior: options.fastScroll ? 'auto' : 'smooth',
+      block: options.fastScroll ? 'end' : 'center'
     });
 
-    await wait(50);
+    if (options.fastScroll) {
+      await wait(50);
+    } else {
+      await waitForScrollToSettle(260, 3200);
+    }
 
     window.scrollBy({
-      top: Math.max(SCROLL_STEP, Math.round(window.innerHeight * 0.9)),
-      behavior: 'auto'
+      top: options.extraTailStep || Math.max(SCROLL_STEP, Math.round(window.innerHeight * 0.9)),
+      behavior: options.fastScroll ? 'auto' : 'smooth'
     });
 
-    await wait(120);
+    if (options.fastScroll) {
+      await wait(options.jumpPauseMs || 120);
+    } else {
+      await waitForScrollToSettle(260, 3200);
+      await wait(options.jumpPauseMs || 220);
+    }
     return true;
   }
 
-  async function jumpToCurrentListTail(status = null) {
+  async function jumpToCurrentListTail(status = null, options = {}) {
     const cards = getGameCards();
     const lastCard = cards[cards.length - 1];
     if (!lastCard) return false;
 
     if (status) {
       setSearchStatus(status, [
-        'Быстро перехожу к концу загруженного списка...',
+        options.fastScroll ? 'Быстро перехожу к концу загруженного списка...' : 'Плавно листаю к концу загруженного списка...',
         `Пролистано игр: ${cards.length}`
       ]);
     }
 
     lastCard.scrollIntoView({
-      behavior: 'auto',
-      block: 'end'
+      behavior: options.fastScroll ? 'auto' : 'smooth',
+      block: options.fastScroll ? 'end' : 'center'
     });
 
-    await wait(20);
+    if (options.fastScroll) {
+      await wait(20);
+    } else {
+      await waitForScrollToSettle(260, 3200);
+    }
 
     window.scrollBy({
-      top: Math.max(window.innerHeight, SCROLL_STEP),
-      behavior: 'auto'
+      top: options.tailStep || Math.max(window.innerHeight, SCROLL_STEP),
+      behavior: options.fastScroll ? 'auto' : 'smooth'
     });
 
-    await wait(80);
+    if (options.fastScroll) {
+      await wait(options.jumpPauseMs || 80);
+    } else {
+      await waitForScrollToSettle(260, 3200);
+      await wait(options.jumpPauseMs || 220);
+    }
     return true;
+  }
+
+  async function waitForSearchResultsAdvance(snapshot, status = null, options = {}) {
+    const startedAt = Date.now();
+    const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 8000;
+    const initialPage = Number(snapshot?.page || 0);
+    const initialLoaded = Number(snapshot?.loaded || 0);
+    const initialHeight = Number(snapshot?.height || 0);
+
+    while (Date.now() - startedAt < timeoutMs) {
+      if (!searching) return false;
+      if (isCloudflareChallengePage()) return true;
+
+      const currentPage = Number(lastLoadedPage || 0);
+      const currentLoaded = getLoadedGamesCount();
+      const currentHeight = document.body.scrollHeight;
+
+      if (
+        currentPage > initialPage ||
+        currentLoaded > initialLoaded ||
+        currentHeight > initialHeight
+      ) {
+        await waitForSearchPageReady(status, 12000);
+        return true;
+      }
+
+      if (status) {
+        const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
+        setSearchStatus(status, [
+          `Жду загрузку page ${nextPageHint}...`,
+          `Пролистано игр: ${currentLoaded}`
+        ]);
+      }
+
+      await sleep(options.pollMs || 120);
+    }
+
+    return false;
   }
 
   async function waitForSearchPageReady(status = null, timeoutMs = 90000) {
@@ -3733,6 +3925,7 @@
     const status = document.querySelector('#tm-itch-status');
     const refreshState = loadRefreshState();
     const refreshActive = !!(refreshState && refreshState.phase === 'search' && isSameGame(refreshState.game, targetGame));
+    const searchMode = getSearchModeOptions(refreshActive);
 
     searching = true;
     pausedByHiddenTab = false;
@@ -3750,7 +3943,7 @@
 
     const initiallyFound = findGameByName(targetText);
     if (!initiallyFound) {
-      await jumpToLastLoadedGame(targetGame, status);
+      await jumpToLastLoadedGame(targetGame, status, searchMode);
     }
 
     let lastScrollY = -1;
@@ -3852,7 +4045,16 @@
       const beforeLoaded = getLoadedGamesCount();
       const beforePage = Number(lastLoadedPage || 0);
 
-      await jumpToCurrentListTail(status);
+      await jumpToCurrentListTail(status, searchMode);
+
+      const advanced = await waitForSearchResultsAdvance({
+        page: beforePage,
+        loaded: beforeLoaded,
+        height: beforeHeight
+      }, status, {
+        timeoutMs: searchMode.pageAdvanceTimeoutMs,
+        pollMs: refreshActive ? 120 : 160
+      });
 
       const afterY = window.scrollY;
       const afterHeight = document.body.scrollHeight;
@@ -3864,7 +4066,9 @@
         afterLoaded !== beforeLoaded ||
         afterPage !== beforePage;
 
-      await sleep(SCROLL_INTERVAL);
+      if (!advanced) {
+        await sleep(refreshActive ? SCROLL_INTERVAL : 260);
+      }
 
       if (!searching) break;
       if (isCloudflareChallengePage()) continue;
@@ -5609,8 +5813,13 @@
     const mainLabels = SEARCH_SERIES.map(item => item.label);
     const sectionsData = getFilterSectionConfigs().reduce((acc, section) => {
       const sectionLinks = getRecordSectionLinks(meta, section.key);
+      const summaryLabels = [
+        ...getMetaSectionLabelsForSummary(meta, section.key),
+        ...getDerivedSectionLabelsForSummary(records, section.key),
+        ...(section.key === 'misc' ? getKnownFilterLabels(section.type) : [])
+      ];
       const canonicalLabels = normalizeLabelList(
-        getMetaSectionLabelsForSummary(meta, section.key).map(label => canonicalizeLabelWithLinks(section.type, label, sectionLinks))
+        summaryLabels.map(label => canonicalizeLabelWithLinks(section.type, label, sectionLinks))
       );
 
       if (section.key === 'platforms' && canonicalLabels.some(label => normalize(label) === 'web') && !canonicalLabels.some(label => normalize(label) === 'mobile web')) {
@@ -5657,7 +5866,9 @@
   function buildRefreshQueue(game) {
     const data = getSummaryData(game);
     const enabledSeries = getEnabledSummarySeries();
+    const sectionState = loadSummarySectionState();
     const sectionRefreshItems = getFilterSectionConfigs().flatMap(section => {
+      if (!getSummarySectionStateEntry(sectionState, section.key).enabled) return [];
       const links = Array.isArray(data.sectionsData?.[section.key]?.links) ? data.sectionsData[section.key].links : [];
       return links.flatMap(item => enabledSeries.map(series => ({
         section: section.key,
@@ -5667,21 +5878,21 @@
       })));
     });
     const items = dedupeRefreshItems([
-      ...enabledSeries.map(series => ({
+      ...(getSummarySectionStateEntry(sectionState, 'default').enabled ? enabledSeries.map(series => ({
         section: 'default',
         label: 'Default',
         series,
         url: buildSeriesUrl(series, 'https://itch.io/games')
-      })),
+      })) : []),
       ...sectionRefreshItems,
-      ...data.intersections.flatMap(item => enabledSeries.map(series => ({
+      ...(getSummarySectionStateEntry(sectionState, 'intersections').enabled ? data.intersections.flatMap(item => enabledSeries.map(series => ({
         section: 'intersections',
         id: item.id || '',
         label: item.label,
         series,
         url: buildSeriesUrl(series, item.popularUrl),
         parts: item.parts
-      })))
+      }))) : [])
     ]);
 
     const missingItems = items.filter(item => !getQueueItemRecords(data.records, item).length);
@@ -6095,13 +6306,14 @@
               ${selectMeta?.inputName ? `name="${escapeHtml(selectMeta.inputName)}"` : ''}
               data-select-key="${escapeHtml(selectMeta?.selectKey || '')}"
               data-select-type="${escapeHtml(selectMeta?.selectType || '')}"
+              ${options.enabled === false ? 'disabled' : ''}
             >
           </td>
         ` : '<td class="tm-stat-select-col tm-stat-placeholder-cell"></td>';
 
         const actionCell = options.allowDelete ? `
           <td class="tm-stat-action-col">
-            <button class="tm-remove-intersection" data-remove-intersection="${escapeHtml(row.id)}" title="Удалить">×</button>
+            <button class="tm-remove-intersection" data-remove-intersection="${escapeHtml(row.id)}" title="Удалить" ${options.enabled === false ? 'disabled' : ''}>×</button>
           </td>
         ` : '<td class="tm-stat-action-col tm-stat-placeholder-cell"></td>';
 
@@ -6117,7 +6329,9 @@
     }
 
     function sectionHtml(key, title, rows, options = {}) {
-      const collapsed = !!sectionState[key];
+      const sectionUiState = getSummarySectionStateEntry(sectionState, key);
+      const collapsed = !!sectionUiState.collapsed;
+      const enabled = !!sectionUiState.enabled;
       const chartHtml = renderSectionChartSkeleton(options.chartKey || key, visibleSeries);
       const emptySeriesNote = visibleSeries.length
         ? ''
@@ -6126,10 +6340,18 @@
       return `
         <section class="tm-stat-section" data-summary-section="${escapeHtml(key)}">
           <div class="tm-stat-section-title" data-section-toggle="${escapeHtml(key)}">
-            <span>${escapeHtml(title)}</span>
+            <div class="tm-stat-section-title-main">
+              <input
+                class="tm-stat-section-enable"
+                type="checkbox"
+                data-section-enable="${escapeHtml(key)}"
+                ${enabled ? 'checked' : ''}
+              >
+              <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
+            </div>
             <span class="tm-stat-section-toggle">${collapsed ? '+' : '-'}</span>
           </div>
-          <div class="tm-stat-section-body ${collapsed ? 'tm-hidden' : ''}">
+          <div class="tm-stat-section-body ${collapsed ? 'tm-hidden' : ''} ${enabled ? '' : 'tm-disabled'}">
             <div class="tm-stat-table-wrap">
               <table class="tm-stat-table">
                 <thead>
@@ -6141,7 +6363,10 @@
                   </tr>
                 </thead>
                 <tbody>
-                  ${buildTableRows(rows, options)}
+                  ${buildTableRows(rows, {
+                    ...options,
+                    enabled
+                  })}
                 </tbody>
               </table>
             </div>
@@ -6406,7 +6631,11 @@
 
       if (sectionBody?.classList.contains('tm-hidden')) {
         const state = loadSummarySectionState();
-        state[sectionKey] = false;
+        const current = getSummarySectionStateEntry(state, sectionKey);
+        state[sectionKey] = {
+          ...current,
+          collapsed: false
+        };
         saveSummarySectionState(state);
         setSectionCollapsed(sectionBody, false);
         if (sectionIcon) sectionIcon.textContent = '-';
@@ -6461,14 +6690,39 @@
         const body = toggle.nextElementSibling;
         const icon = toggle.querySelector('.tm-stat-section-toggle');
         const state = loadSummarySectionState();
-        const isCollapsed = body ? body.classList.contains('tm-hidden') : !!state[key];
+        const current = getSummarySectionStateEntry(state, key);
+        const isCollapsed = body ? body.classList.contains('tm-hidden') : !!current.collapsed;
         const nextCollapsed = !isCollapsed;
 
-        state[key] = nextCollapsed;
+        state[key] = {
+          ...current,
+          collapsed: nextCollapsed
+        };
         saveSummarySectionState(state);
 
         if (body) setSectionCollapsed(body, nextCollapsed);
         if (icon) icon.textContent = nextCollapsed ? '+' : '-';
+      });
+    });
+
+    widget.querySelectorAll('[data-section-enable]').forEach(input => {
+      input.addEventListener('click', event => {
+        event.stopPropagation();
+      });
+
+      input.addEventListener('change', () => {
+        const key = input.getAttribute('data-section-enable');
+        if (!key) return;
+
+        const state = loadSummarySectionState();
+        const current = getSummarySectionStateEntry(state, key);
+        state[key] = {
+          ...current,
+          enabled: input.checked,
+          collapsed: input.checked ? false : true
+        };
+        saveSummarySectionState(state);
+        createSummaryStatsWidget();
       });
     });
 
