@@ -1,12 +1,14 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.2.3
+// @version      5.2.5
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
 // @author       Nnican
 // @license      MIT
+// @homepageURL  https://github.com/NnicanBuak/itch-stats
+// @compatible   tampermonkey Tampermonkey
 // @grant        none
 // @updateURL    https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
 // @downloadURL  https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
@@ -1023,10 +1025,12 @@
 
     .tm-summary-shell {
       position: relative;
-      padding-right: 312px;
+      width: 100%;
+      padding-right: 0;
     }
 
     .tm-summary-main {
+      width: 100%;
       min-width: 0;
     }
 
@@ -1076,6 +1080,7 @@
 
     @media (max-width: 1280px) {
       .tm-summary-shell {
+        width: 100%;
         padding-right: 0;
       }
 
@@ -1661,7 +1666,7 @@
 
   function normalizeSummaryChartDuration(value) {
     const duration = Number(value);
-    return duration === 30 ? 30 : duration === 7 ? 7 : 1;
+    return duration === 90 ? 90 : duration === 30 ? 30 : duration === 7 ? 7 : 1;
   }
 
   function normalizeSummaryChartTrends(trends) {
@@ -5266,7 +5271,8 @@
       durations: {
         1: buildDuration(1),
         7: buildDuration(7),
-        30: buildDuration(30)
+        30: buildDuration(30),
+        90: buildDuration(90)
       }
     };
   }
@@ -5285,7 +5291,7 @@
             </div>
             <div class="tm-stat-chart-head-right">
               <div class="tm-stat-chart-toggle">
-                ${[1, 7, 30].map((duration, index) => `
+                ${[1, 7, 30, 90].map((duration, index) => `
                   <button class="tm-stat-chart-toggle-button ${index === 0 ? 'tm-active' : ''}" type="button" data-chart-duration="${duration}">${duration}d</button>
                 `).join('')}
               </div>
