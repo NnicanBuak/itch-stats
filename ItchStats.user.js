@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      5.3.0
+// @version      6.0.0
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -388,6 +388,15 @@
       flex: 1 1 auto;
     }
 
+    .tm-stat-section-title-copy {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
     .tm-stat-section-title-text {
       min-width: 0;
     }
@@ -435,8 +444,11 @@
 
     .tm-stat-section-toggle {
       opacity: .78;
-      font-size: 12px;
+      font-size: 19px;
       font-weight: 900;
+      line-height: 1;
+      min-width: 18px;
+      text-align: center;
     }
 
     .tm-summary-root-body.tm-hidden {
@@ -545,14 +557,16 @@
 
     #tm-itch-collapse,
     .tm-widget-collapse {
-      width: 28px;
-      height: 28px;
+      width: 34px;
+      height: 34px;
       border: 0;
       border-radius: 8px;
       background: var(--tm-accent-strong);
       color: #fff;
       cursor: pointer;
       font-weight: 900;
+      font-size: 22px;
+      line-height: 1;
     }
 
     #tm-itch-finder input {
@@ -769,13 +783,13 @@
       justify-content: center;
       min-width: 0;
       flex: 1 1 0;
-      padding: 4px 8px;
-      border-radius: 999px;
+      padding: 8px 10px;
+      border-radius: 10px;
       background: rgba(0,0,0,.52);
       color: rgba(255,255,255,.74);
-      font-size: 10px;
+      font-size: 12px;
       line-height: 1.2;
-      font-weight: 800;
+      font-weight: 900;
       text-align: center;
       white-space: nowrap;
       box-sizing: border-box;
@@ -861,6 +875,7 @@
       margin-top: 8px;
       font-size: 12px;
       min-width: 640px;
+      font-weight: 400;
     }
 
     .tm-stat-table-wrap {
@@ -925,7 +940,7 @@
     }
 
     .tm-stat-current {
-      font-weight: 800;
+      font-weight: 400;
     }
 
     .tm-stat-checkbox {
@@ -950,7 +965,13 @@
 
     .tm-stat-table th {
       opacity: .75;
-      font-weight: 700;
+      font-weight: 400;
+    }
+
+    .tm-stat-table td,
+    .tm-stat-table td span,
+    .tm-stat-table .tm-stat-link {
+      font-weight: 400;
     }
 
     .tm-stat-focus-row td {
@@ -1011,6 +1032,31 @@
       font-size: 11px;
       font-weight: 700;
       white-space: nowrap;
+    }
+
+    .tm-section-series-toggle {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tm-section-series-button {
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,.06);
+      color: rgba(255,255,255,.88);
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      line-height: 1.2;
+    }
+
+    .tm-section-series-button.tm-active {
+      background: rgba(255,255,255,.16);
+      border-color: rgba(255,255,255,.44);
+      color: #fff;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.16) inset;
     }
 
     .tm-summary-reminder {
@@ -1484,6 +1530,16 @@
 
     .tm-intersections-action {
       margin-top: 10px;
+    }
+
+    .tm-referrer-intersection-button {
+      display: inline-flex;
+      width: auto;
+      margin: 0 0 0 8px;
+      padding: 4px 8px;
+      font-size: 11px;
+      line-height: 1.2;
+      vertical-align: middle;
     }
 
     .tm-primary-button {
@@ -2527,6 +2583,62 @@
       popularUrl: `https://itch.io/games/${path}${suffix}`,
       newPopularUrl: `https://itch.io/games/new-and-popular/${path}${suffix}`
     };
+  }
+
+  function buildIntersectionPartFromSearchSegment(segment) {
+    const normalizedSegment = normalize(segment);
+    if (!normalizedSegment) return null;
+
+    if (normalizedSegment.startsWith('genre-')) {
+      const label = normalizeSectionLabel('genres', getLabelFromSearchToken('genre', normalizedSegment) || normalizedSegment.replace(/^genre-/, '').replaceAll('-', ' '));
+      return label ? { type: 'genre', label, href: `https://itch.io/games/${normalizedSegment}` } : null;
+    }
+
+    if (normalizedSegment.startsWith('platform-') || getKnownPlatformLabel(normalizedSegment)) {
+      const label = normalizePlatformLabel(getLabelFromSearchToken('platform', normalizedSegment) || normalizedSegment);
+      const href = buildSearchUrlForLabel('platform', label);
+      return label && href ? { type: 'platform', label, href } : null;
+    }
+
+    if (normalizedSegment.startsWith('tag-')) {
+      const label = normalizeSectionLabel('tags', getLabelFromSearchToken('tag', normalizedSegment) || normalizedSegment.replace(/^tag-/, '').replaceAll('-', ' '));
+      return label ? { type: 'tag', label, href: `https://itch.io/games/${normalizedSegment}` } : null;
+    }
+
+    if (normalizedSegment.startsWith('lang-')) {
+      const label = normalizeSectionLabel('languages', getLabelFromSearchToken('language', normalizedSegment) || normalizedSegment.replace(/^lang-/, ''));
+      return label ? { type: 'language', label, href: `https://itch.io/games/${normalizedSegment}` } : null;
+    }
+
+    for (const type of ['price', 'type', 'misc', 'session_length', 'multiplayer']) {
+      if (!FILTER_TOKEN_TO_LABEL[type]?.[normalizedSegment]) continue;
+      const label = normalizeSectionLabel(getFilterSectionKeyByType(type), getLabelFromSearchToken(type, normalizedSegment) || normalizedSegment);
+      return label ? { type, label, href: `https://itch.io/games/${normalizedSegment}` } : null;
+    }
+
+    return null;
+  }
+
+  function getIntersectionPartsFromReferrerHref(href) {
+    const absolute = toAbsoluteItchUrl(href);
+    if (!absolute) return [];
+
+    try {
+      const url = new URL(absolute);
+      if (normalize(url.hostname) !== 'itch.io') return [];
+      if (!url.pathname.startsWith('/games')) return [];
+    } catch (_) {
+      return [];
+    }
+
+    const searchInfo = parseSearchInfoFromHref(absolute);
+    if (searchInfo.segments.length < 2) return [];
+
+    return normalizeIntersectionParts(
+      searchInfo.segments
+        .map(buildIntersectionPartFromSearchSegment)
+        .filter(Boolean)
+    );
   }
 
   function buildSearchUrlForLabel(type, label) {
@@ -5205,8 +5317,8 @@
     const denominator = count * sumXX - sumX * sumX;
     const slope = denominator ? ((count * sumXY) - (sumX * sumY)) / denominator : 0;
     const intercept = count ? (sumY - slope * sumX) / count : 0;
-    const startIndex = 0;
-    const endIndex = Math.max(...points.map((_, index) => index));
+    const startIndex = coords[0].index;
+    const endIndex = coords[coords.length - 1].index;
     const startValue = intercept + slope * startIndex;
     const endValue = intercept + slope * endIndex;
 
@@ -5486,13 +5598,7 @@
       <div class="tm-stat-chart" data-chart-root="${escapeHtml(chartKey)}">
         <div class="tm-stat-chart-head">
           <div class="tm-stat-chart-head-top">
-            <div class="tm-stat-chart-head-left">
-              <div class="tm-stat-chart-toggle">
-                ${seriesKeys.map((seriesKey, index) => `
-                  <button class="tm-stat-chart-toggle-button ${index === 0 ? 'tm-active' : ''}" type="button" data-chart-mode="${escapeHtml(seriesKey)}">${escapeHtml(getSeriesLabel(seriesKey))}</button>
-                `).join('')}
-              </div>
-            </div>
+            <div class="tm-stat-chart-head-left"></div>
             <div class="tm-stat-chart-head-right">
               <div class="tm-stat-chart-toggle">
                 ${[1, 7, 30, 90].map((duration, index) => `
@@ -6267,21 +6373,37 @@
       return labels.map(label => buildRow(label, section));
     }
 
-    function buildSeriesHeaderCells() {
-      return visibleSeries.map(seriesKey => `
-        <th class="tm-stat-series-cell">${escapeHtml(getSeriesLabel(seriesKey))} now</th>
-        <th class="tm-stat-series-cell">${escapeHtml(getSeriesLabel(seriesKey))} best</th>
-      `).join('');
+    function getSectionSeriesMode(sectionKey) {
+      const pendingFocus = transferredPayload?.pendingSummaryFocus;
+      const requestedSeries = String(pendingFocus?.section === sectionKey ? pendingFocus?.series || '' : '').trim();
+      if (requestedSeries && visibleSeries.includes(requestedSeries)) {
+        return requestedSeries;
+      }
+      return getSummaryChartPref(sectionKey, visibleSeries).mode;
     }
 
-    function buildSeriesValueCells(row) {
-      return visibleSeries.map(seriesKey => {
-        const stats = row.seriesStats?.[seriesKey] || {};
-        return `
-          <td class="tm-stat-series-cell" data-summary-series-current="${escapeHtml(seriesKey)}">${renderStatCell(stats.current, { current: true, bestRecord: stats.best, href: stats.href })}</td>
-          <td class="tm-stat-series-cell" data-summary-series-best="${escapeHtml(seriesKey)}">${renderBestStatCell(stats.best)}</td>
-        `;
-      }).join('');
+    function buildSeriesHeaderCells() {
+      return `
+        <th class="tm-stat-series-cell">Now</th>
+        <th class="tm-stat-series-cell">Best</th>
+      `;
+    }
+
+    function buildSeriesValueCells(row, activeSeriesKey = '') {
+      const stats = row.seriesStats?.[activeSeriesKey] || {};
+      return `
+        <td class="tm-stat-series-cell" data-summary-series-current="${escapeHtml(activeSeriesKey)}">${renderStatCell(stats.current, { current: true, bestRecord: stats.best, href: stats.href })}</td>
+        <td class="tm-stat-series-cell" data-summary-series-best="${escapeHtml(activeSeriesKey)}">${renderBestStatCell(stats.best)}</td>
+      `;
+    }
+
+    function sortRowsForSeries(rows, activeSeriesKey = '') {
+      return [...rows].sort((left, right) => {
+        const leftRank = Number(left?.seriesStats?.[activeSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
+        const rightRank = Number(right?.seriesStats?.[activeSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        return normalize(left?.label).localeCompare(normalize(right?.label));
+      });
     }
 
     function buildTableRows(rows, options = {}) {
@@ -6290,7 +6412,8 @@
           <tr>
             ${options.selectable ? '<td class="tm-stat-select-col"></td>' : '<td class="tm-stat-select-col tm-stat-placeholder-cell"></td>'}
             <td>&#8212;</td>
-            ${visibleSeries.map(() => '<td class="tm-stat-series-cell">&#8212;</td><td class="tm-stat-series-cell">&#8212;</td>').join('')}
+            <td class="tm-stat-series-cell">&#8212;</td>
+            <td class="tm-stat-series-cell">&#8212;</td>
             ${options.allowDelete ? '<td class="tm-stat-action-col"></td>' : '<td class="tm-stat-action-col tm-stat-placeholder-cell"></td>'}
           </tr>
         `;
@@ -6321,17 +6444,37 @@
           <tr data-summary-row-section="${escapeHtml(row.section || options.sectionKey || '')}" data-summary-row-label="${escapeHtml(normalize(row.label))}">
             ${selectCell}
             <td><div class="tm-stat-name-cell"><span>${escapeHtml(row.label)}</span></div></td>
-            ${buildSeriesValueCells(row)}
+            ${buildSeriesValueCells(row, options.activeSeriesKey)}
             ${actionCell}
           </tr>
         `;
       }).join('');
     }
 
+    function buildSectionSeriesSelector(sectionKey, activeSeriesKey, enabled) {
+      if (!visibleSeries.length) return '';
+
+      return `
+        <div class="tm-section-series-toggle">
+          ${visibleSeries.map(seriesKey => `
+            <button
+              class="tm-section-series-button ${seriesKey === activeSeriesKey ? 'tm-active' : ''}"
+              type="button"
+              data-section-series="${escapeHtml(seriesKey)}"
+              data-section-series-key="${escapeHtml(sectionKey)}"
+              ${enabled ? '' : 'disabled'}
+            >${escapeHtml(getSeriesLabel(seriesKey))}</button>
+          `).join('')}
+        </div>
+      `;
+    }
+
     function sectionHtml(key, title, rows, options = {}) {
       const sectionUiState = getSummarySectionStateEntry(sectionState, key);
       const collapsed = !!sectionUiState.collapsed;
       const enabled = !!sectionUiState.enabled;
+      const activeSeriesKey = getSectionSeriesMode(key);
+      const sortedRows = sortRowsForSeries(rows, activeSeriesKey);
       const chartHtml = renderSectionChartSkeleton(options.chartKey || key, visibleSeries);
       const emptySeriesNote = visibleSeries.length
         ? ''
@@ -6347,7 +6490,10 @@
                 data-section-enable="${escapeHtml(key)}"
                 ${enabled ? 'checked' : ''}
               >
-              <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
+              <div class="tm-stat-section-title-copy">
+                <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
+                ${buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
+              </div>
             </div>
             <span class="tm-stat-section-toggle">${collapsed ? '+' : '-'}</span>
           </div>
@@ -6363,9 +6509,10 @@
                   </tr>
                 </thead>
                 <tbody>
-                  ${buildTableRows(rows, {
+                  ${buildTableRows(sortedRows, {
                     ...options,
-                    enabled
+                    enabled,
+                    activeSeriesKey
                   })}
                 </tbody>
               </table>
@@ -6548,32 +6695,12 @@
       let currentMode = initialPref.mode;
       let currentDuration = initialPref.duration;
 
-      root.querySelectorAll('[data-chart-mode]').forEach(button => {
-        const buttonMode = button.getAttribute('data-chart-mode') || '';
-        button.classList.toggle('tm-active', buttonMode === currentMode);
-      });
       root.querySelectorAll('[data-chart-duration]').forEach(button => {
         const buttonDuration = Number(button.getAttribute('data-chart-duration')) || 1;
         button.classList.toggle('tm-active', buttonDuration === currentDuration);
       });
 
       renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
-
-      root.querySelectorAll('[data-chart-mode]').forEach(button => {
-        button.addEventListener('click', () => {
-          const nextMode = button.getAttribute('data-chart-mode') || currentMode;
-          currentMode = nextMode;
-          setSummaryChartPref(chartKey, {
-            mode: currentMode,
-            duration: currentDuration,
-            trends: getSummaryChartPref(chartKey, visibleSeries).trends
-          });
-          root.querySelectorAll('[data-chart-mode]').forEach(other => {
-            other.classList.toggle('tm-active', other === button);
-          });
-          renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
-        });
-      });
 
       root.querySelectorAll('[data-chart-duration]').forEach(button => {
         button.addEventListener('click', () => {
@@ -6606,7 +6733,7 @@
       body.classList.remove('tm-hidden');
       body.style.maxHeight = '0px';
       body.offsetHeight;
-        body.style.maxHeight = `${body.scrollHeight}px`;
+      body.style.maxHeight = `${body.scrollHeight}px`;
     }
 
     function scrollSummaryWidgetIntoView() {
@@ -6623,6 +6750,19 @@
       const labelKey = normalize(target.label);
       const seriesKey = String(target.series || '').trim();
       if (!sectionKey || !labelKey) return;
+
+      if (seriesKey && visibleSeries.includes(seriesKey)) {
+        const currentPref = getSummaryChartPref(sectionKey, visibleSeries);
+        if (currentPref.mode !== seriesKey) {
+          setSummaryChartPref(sectionKey, {
+            ...currentPref,
+            mode: seriesKey
+          });
+          if (transferredPayload) transferredPayload.pendingSummaryFocus = target;
+          createSummaryStatsWidget();
+          return;
+        }
+      }
 
       const section = widget.querySelector(`[data-summary-section="${CSS.escape(sectionKey)}"]`);
       const sectionBody = section?.querySelector('.tm-stat-section-body');
@@ -6718,10 +6858,26 @@
         const current = getSummarySectionStateEntry(state, key);
         state[key] = {
           ...current,
-          enabled: input.checked,
-          collapsed: input.checked ? false : true
+          enabled: input.checked
         };
         saveSummarySectionState(state);
+        createSummaryStatsWidget();
+      });
+    });
+
+    widget.querySelectorAll('[data-section-series]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        const seriesKey = button.getAttribute('data-section-series');
+        const sectionKey = button.getAttribute('data-section-series-key');
+        if (!sectionKey || !seriesKey || !isKnownSeriesKey(seriesKey)) return;
+
+        const currentPref = getSummaryChartPref(sectionKey, visibleSeries);
+        setSummaryChartPref(sectionKey, {
+          mode: seriesKey,
+          duration: currentPref.duration,
+          trends: currentPref.trends
+        });
         createSummaryStatsWidget();
       });
     });
@@ -6784,6 +6940,72 @@
       triggerJsonDownload(`itch-stats-${fileNameBase || 'game'}-${EXPORT_SCHEMA_VERSION}.json`, payload);
     }
 
+    function buildIntersectionFromParts(parts) {
+      const normalizedParts = normalizeIntersectionParts(parts);
+      if (normalizedParts.length < 2) return false;
+
+      const id = buildIntersectionId(normalizedParts);
+      const urls = buildIntersectionUrls(normalizedParts);
+      if (!urls.popularUrl || !urls.newPopularUrl) return false;
+
+      const item = {
+        id,
+        label: normalizedParts.map(part => part.label).join(' + '),
+        parts: normalizedParts,
+        popularUrl: urls.popularUrl,
+        newPopularUrl: urls.newPopularUrl
+      };
+
+      const nextItems = [...getGameIntersections(game)];
+      const existingIndex = nextItems.findIndex(entry => entry.id === id);
+      if (existingIndex >= 0) nextItems[existingIndex] = item;
+      else nextItems.push(item);
+
+      saveGameIntersections(game, nextItems);
+      createSummaryStatsWidget();
+      return true;
+    }
+
+    function enhanceReferrerIntersectionButtons() {
+      document.querySelectorAll('.game_edit_referrer_analytics_widget table.referrers tbody tr').forEach(row => {
+        const firstCell = row.cells?.[0];
+        const link = firstCell?.querySelector?.('a[href]');
+        if (!firstCell || !link) return;
+
+        const existingButton = firstCell.querySelector('[data-tm-referrer-intersection]');
+        const href = link.href || link.getAttribute('href') || '';
+        const parts = getIntersectionPartsFromReferrerHref(href);
+
+        if (parts.length < 2) {
+          existingButton?.remove();
+          return;
+        }
+
+        const button = existingButton || document.createElement('button');
+        button.type = 'button';
+        button.className = 'button outline tm-referrer-intersection-button';
+        button.textContent = 'Собрать пересечение';
+        button.disabled = !game;
+        button.title = game
+          ? `Собрать пересечение: ${parts.map(part => part.label).join(' + ')}`
+          : 'Игра не определена';
+        button.setAttribute('data-tm-referrer-intersection', '1');
+        button.dataset.href = href;
+
+        if (!button._tmBound) {
+          button.addEventListener('click', () => {
+            if (!game) return;
+            buildIntersectionFromParts(getIntersectionPartsFromReferrerHref(button.dataset.href || ''));
+          });
+          button._tmBound = true;
+        }
+
+        if (button !== existingButton) {
+          link.insertAdjacentElement('afterend', button);
+        }
+      });
+    }
+
     async function importCurrentGameStats(file) {
       if (!file || !game) return;
 
@@ -6832,29 +7054,11 @@
     if (buildIntersectionButton) {
       buildIntersectionButton.addEventListener('click', () => {
         const parts = normalizeIntersectionParts(selectableOptions.filter(item => selected.has(`${item.type}|${normalize(item.label)}`)));
-        if (!parts.length) return;
-
-        const id = buildIntersectionId(parts);
-        const urls = buildIntersectionUrls(parts);
-        if (!urls.popularUrl || !urls.newPopularUrl) return;
-
-        const item = {
-          id,
-          label: parts.map(part => part.label).join(' + '),
-          parts,
-          popularUrl: urls.popularUrl,
-          newPopularUrl: urls.newPopularUrl
-        };
-
-        const nextItems = [...intersections];
-        const existingIndex = nextItems.findIndex(entry => entry.id === id);
-        if (existingIndex >= 0) nextItems[existingIndex] = item;
-        else nextItems.push(item);
-
-        saveGameIntersections(game, nextItems);
-        createSummaryStatsWidget();
+        buildIntersectionFromParts(parts);
       });
     }
+
+    enhanceReferrerIntersectionButtons();
 
     const fetchTagsButton = widget.querySelector('#tm-fetch-game-tags');
     if (fetchTagsButton && publicGameUrl) {
@@ -6992,7 +7196,25 @@
   }
 
   if (isSummaryPage) {
-    safeInit('summary stats', createSummaryStatsWidget);
+    safeInit('summary stats', () => {
+      createSummaryStatsWidget();
+
+      let summaryReferrersTimer = null;
+      const summaryReferrersObserver = new MutationObserver(() => {
+        clearTimeout(summaryReferrersTimer);
+        summaryReferrersTimer = setTimeout(() => {
+          createSummaryStatsWidget();
+        }, 120);
+      });
+
+      const referrersRoot = document.querySelector('.game_edit_referrer_analytics_widget');
+      if (referrersRoot) {
+        summaryReferrersObserver.observe(referrersRoot, {
+          childList: true,
+          subtree: true
+        });
+      }
+    });
   }
 
   maybeResumeRefreshFlow().catch(error => {
