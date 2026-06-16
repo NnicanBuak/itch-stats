@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.2.0
+// @version      6.2.1
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -5436,14 +5436,6 @@
   function buildSmoothBezierPath(points, getX, getY) {
     const coords = getChartCoordinates(points, getX, getY);
     if (coords.length < 2) return '';
-
-    return splitChartCoordinatesByNeighboringPoints(coords)
-      .filter(group => group.length >= 2)
-      .map(group => buildSmoothBezierPathForCoordinates(group, getY))
-      .join(' ');
-  }
-
-  function buildSmoothBezierPathForCoordinates(coords, getY) {
     if (coords.length === 2) {
       return `M${coords[0].x} ${coords[0].y} L${coords[1].x} ${coords[1].y}`;
     }
