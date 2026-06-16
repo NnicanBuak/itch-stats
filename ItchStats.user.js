@@ -2214,6 +2214,20 @@
     return getKnownPlatformLabel(text) || text;
   }
 
+  function normalizeTagLabel(label) {
+    const text = String(label || '').trim();
+    if (!text) return '';
+
+    return text
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(word => {
+        if (word.length <= 1) return word.toUpperCase();
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(' ');
+  }
+
   function getKnownPlatformLabel(value) {
     const key = normalize(value).replace(/^platform-/, '');
     if (!key) return '';
@@ -2258,6 +2272,7 @@
     if (!config || !text) return '';
 
     if (config.type === 'platform') return normalizePlatformLabel(text);
+    if (config.type === 'tag') return normalizeTagLabel(text);
     if (config.type === 'language') {
       const known = getKnownFilterLabel(config.type, text);
       if (known) return known;
@@ -2373,7 +2388,9 @@
 
     if (sectionKey === 'genres' && Array.isArray(meta.genres)) return normalizeLabelList(meta.genres);
     if (sectionKey === 'platforms' && Array.isArray(meta.platforms)) return normalizeLabelList(meta.platforms.map(normalizePlatformLabel));
-    if (sectionKey === 'tags' && Array.isArray(meta.tags)) return normalizeLabelList(meta.tags);
+    if (sectionKey === 'tags' && Array.isArray(meta.tags)) {
+      return normalizeLabelList(meta.tags.map(label => normalizeSectionLabel('tags', label)));
+    }
 
     return [];
   }
@@ -6746,7 +6763,8 @@
 
     function sectionHtml(key, title, rows, options = {}) {
       const sectionUiState = getSummarySectionStateEntry(sectionState, key);
-      const collapsed = !!sectionUiState.collapsed;
+      const autoCollapsed = rows.length < 4;
+      const collapsed = autoCollapsed || !!sectionUiState.collapsed;
       const enabled = !!sectionUiState.enabled;
       const activeSeriesKey = getSectionSeriesMode(key);
       const sortedRows = sortRowsForSeries(rows, activeSeriesKey);
