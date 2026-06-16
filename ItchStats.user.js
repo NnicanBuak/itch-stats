@@ -9,7 +9,6 @@
 // @license      MIT
 // @tag          utilities
 // @homepageURL  https://github.com/NnicanBuak/itch-stats
-// @compatible   tampermonkey Tampermonkey
 // @grant        none
 // @updateURL    https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
 // @downloadURL  https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
