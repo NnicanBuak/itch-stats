@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.0.0
+// @version      6.1.0
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -363,27 +363,31 @@
     }
 
     .tm-stat-section-title {
-      margin: 10px -12px 8px;
-      padding: 9px 12px;
-      background: var(--tm-accent);
+      margin: 12px -12px 10px;
+      padding: 12px 14px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)),
+        linear-gradient(135deg, rgba(211,109,109,.94), rgba(161,59,59,.94));
       color: #fff;
       font-size: 13px;
       font-weight: 900;
       text-align: left;
-      border-top: 1px solid rgba(255,255,255,.18);
-      border-bottom: 1px solid rgba(255,255,255,.55);
+      border: 1px solid rgba(255,255,255,.16);
+      border-bottom-color: rgba(255,255,255,.32);
+      border-radius: 14px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.18);
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
-      gap: 8px;
+      gap: 12px;
       cursor: pointer;
       user-select: none;
     }
 
     .tm-stat-section-title-main {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      align-items: flex-start;
+      gap: 10px;
       min-width: 0;
       flex: 1 1 auto;
     }
@@ -392,19 +396,23 @@
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      gap: 8px;
+      gap: 10px;
       min-width: 0;
       flex: 1 1 auto;
     }
 
     .tm-stat-section-title-text {
       min-width: 0;
+      font-size: 20px;
+      line-height: 1;
+      letter-spacing: .01em;
+      text-shadow: 0 1px 0 rgba(0,0,0,.12);
     }
 
     .tm-stat-section-enable {
-      width: 15px;
-      height: 15px;
-      margin: 0;
+      width: 16px;
+      height: 16px;
+      margin: 3px 0 0;
       accent-color: #fff;
       cursor: pointer;
       flex: 0 0 auto;
@@ -415,11 +423,9 @@
     }
 
     .tm-stat-section-body {
-      overflow: hidden;
-      opacity: 1;
-      max-height: 2000px;
-      transition: max-height .28s ease, opacity .22s ease, margin-top .28s ease;
-      will-change: max-height, opacity;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
     }
 
     .tm-stat-section-body.tm-disabled {
@@ -436,19 +442,37 @@
       opacity: .95;
     }
 
-    .tm-stat-section-body.tm-hidden {
+    .tm-stat-chart-shell {
+      overflow: hidden;
+      opacity: 1;
+      max-height: 2000px;
+      transition: max-height .28s ease, opacity .22s ease, margin-top .28s ease;
+      will-change: max-height, opacity;
+    }
+
+    .tm-stat-chart-shell.tm-hidden {
       opacity: 0;
       max-height: 0;
       margin-top: -2px;
     }
 
     .tm-stat-section-toggle {
-      opacity: .78;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background: rgba(18,18,18,.18);
+      border: 1px solid rgba(255,255,255,.24);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+      opacity: 1;
       font-size: 19px;
       font-weight: 900;
       line-height: 1;
-      min-width: 18px;
+      min-width: 32px;
       text-align: center;
+      flex: 0 0 auto;
     }
 
     .tm-summary-root-body.tm-hidden {
@@ -1041,22 +1065,36 @@
     }
 
     .tm-section-series-button {
-      border: 1px solid rgba(255,255,255,.18);
+      border: 1px solid rgba(255,255,255,.34);
       border-radius: 999px;
-      background: rgba(255,255,255,.06);
-      color: rgba(255,255,255,.88);
-      padding: 6px 14px;
-      font-size: 13px;
+      background: rgba(18,18,18,.24);
+      color: #fff8f8;
+      padding: 7px 14px;
+      font-size: 12px;
       font-weight: 800;
       cursor: pointer;
       line-height: 1.2;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease;
+    }
+
+    .tm-section-series-button:hover {
+      background: rgba(18,18,18,.36);
+      border-color: rgba(255,255,255,.52);
+      transform: translateY(-1px);
+    }
+
+    .tm-section-series-button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+      transform: none;
     }
 
     .tm-section-series-button.tm-active {
-      background: rgba(255,255,255,.16);
-      border-color: rgba(255,255,255,.44);
-      color: #fff;
-      box-shadow: 0 0 0 1px rgba(255,255,255,.16) inset;
+      background: #fff5f5;
+      border-color: #fff;
+      color: #7c2020;
+      box-shadow: 0 10px 18px rgba(68, 14, 14, .18);
     }
 
     .tm-summary-reminder {
@@ -1276,6 +1314,51 @@
       display: inline-flex;
       gap: 6px;
       flex-wrap: wrap;
+    }
+
+    .tm-stat-chart-copy-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      color: rgba(255,255,255,.82);
+      cursor: pointer;
+      padding: 0;
+      transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
+    }
+
+    .tm-stat-chart-copy-button:hover {
+      background: rgba(255,255,255,.1);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
+    .tm-stat-chart-copy-button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .tm-stat-chart-copy-button.tm-success {
+      background: rgba(85, 179, 114, .18);
+      border-color: rgba(85, 179, 114, .38);
+      color: #d9ffe3;
+    }
+
+    .tm-stat-chart-copy-button.tm-error {
+      background: rgba(211,109,109,.18);
+      border-color: rgba(211,109,109,.42);
+      color: #fff2f2;
+    }
+
+    .tm-stat-chart-copy-button svg {
+      width: 14px;
+      height: 14px;
+      display: block;
     }
 
     .tm-stat-chart-toggle-button {
@@ -1877,28 +1960,68 @@
     return game?.id ? `id:${game.id}` : `name:${normalize(game?.name)}`;
   }
 
+  function normalizeStoredIntersectionItem(item) {
+    if (!item || typeof item !== 'object') return null;
+
+    const parts = normalizeIntersectionParts(item.parts);
+    if (parts.length >= 2) {
+      const urls = buildIntersectionUrls(parts);
+      if (!urls.popularUrl || !urls.newPopularUrl) return null;
+
+      return {
+        id: buildIntersectionId(parts),
+        label: parts.map(part => part.label).join(' + '),
+        parts,
+        popularUrl: urls.popularUrl,
+        newPopularUrl: urls.newPopularUrl
+      };
+    }
+
+    const label = String(item.label || '').trim();
+    const id = String(item.id || '').trim() || normalize(label);
+    const popularUrl = String(item.popularUrl || '').trim();
+    const newPopularUrl = String(item.newPopularUrl || '').trim();
+    if (!label || !id || !popularUrl || !newPopularUrl) return null;
+
+    return {
+      ...item,
+      id,
+      label,
+      popularUrl,
+      newPopularUrl
+    };
+  }
+
+  function normalizeIntersectionItems(items) {
+    const byId = new Map();
+
+    (Array.isArray(items) ? items : []).forEach(item => {
+      const normalizedItem = normalizeStoredIntersectionItem(item);
+      if (!normalizedItem) return;
+
+      const dedupeKey = normalize(normalizedItem.id) || normalize(normalizedItem.label);
+      if (!dedupeKey) return;
+      byId.set(dedupeKey, normalizedItem);
+    });
+
+    return [...byId.values()].sort((a, b) => {
+      const labelDelta = normalize(a.label).localeCompare(normalize(b.label));
+      if (labelDelta) return labelDelta;
+      return normalize(a.id).localeCompare(normalize(b.id));
+    });
+  }
+
+  function hasIntersectionItem(items, parts) {
+    const intersectionId = normalize(buildIntersectionId(parts));
+    if (!intersectionId) return false;
+    return normalizeIntersectionItems(items).some(item => normalize(item.id) === intersectionId);
+  }
+
   function getGameIntersections(game) {
     const all = loadIntersectionsState();
     const key = getIntersectionStorageKey(game);
     const items = Array.isArray(all[key]) ? all[key] : [];
-    const normalizedItems = items
-      .filter(item => item && typeof item === 'object' && item.id && item.label)
-      .map(item => {
-        if (!Array.isArray(item.parts) || !item.parts.length) return item;
-
-        const parts = normalizeIntersectionParts(item.parts);
-        const urls = buildIntersectionUrls(parts);
-        if (!urls.popularUrl || !urls.newPopularUrl) return item;
-
-        return {
-          ...item,
-          id: buildIntersectionId(parts),
-          label: parts.map(part => part.label).join(' + '),
-          parts,
-          popularUrl: urls.popularUrl,
-          newPopularUrl: urls.newPopularUrl
-        };
-      });
+    const normalizedItems = normalizeIntersectionItems(items);
 
     if (key && JSON.stringify(normalizedItems) !== JSON.stringify(items)) {
       all[key] = normalizedItems;
@@ -1912,7 +2035,7 @@
     const all = loadIntersectionsState();
     const key = getIntersectionStorageKey(game);
     if (!key) return;
-    all[key] = Array.isArray(items) ? items : [];
+    all[key] = normalizeIntersectionItems(items);
     saveIntersectionsState(all);
   }
 
@@ -5600,6 +5723,11 @@
           <div class="tm-stat-chart-head-top">
             <div class="tm-stat-chart-head-left"></div>
             <div class="tm-stat-chart-head-right">
+              <button class="tm-stat-chart-copy-button" type="button" data-chart-copy title="Copy chart image" aria-label="Copy chart image">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path fill="currentColor" d="M5 1.5A1.5 1.5 0 0 0 3.5 3v7A1.5 1.5 0 0 0 5 11.5h1V10H5V3h6v1h1.5V3A1.5 1.5 0 0 0 11 1.5H5Zm3 4A1.5 1.5 0 0 0 6.5 7v5A1.5 1.5 0 0 0 8 13.5h4A1.5 1.5 0 0 0 13.5 12V7A1.5 1.5 0 0 0 12 5.5H8Zm0 1h4a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5H8a.5.5 0 0 1-.5-.5V7a.5.5 0 0 1 .5-.5Z"></path>
+                </svg>
+              </button>
               <div class="tm-stat-chart-toggle">
                 ${[1, 7, 30, 90].map((duration, index) => `
                   <button class="tm-stat-chart-toggle-button ${index === 0 ? 'tm-active' : ''}" type="button" data-chart-duration="${duration}">${duration}d</button>
@@ -5615,6 +5743,121 @@
     `;
   }
 
+  function canCopyChartImage() {
+    return !!(
+      navigator?.clipboard?.write &&
+      typeof ClipboardItem !== 'undefined' &&
+      typeof XMLSerializer !== 'undefined' &&
+      typeof Blob !== 'undefined' &&
+      typeof URL !== 'undefined'
+    );
+  }
+
+  function setChartCopyButtonState(button, state = 'idle') {
+    if (!button) return;
+
+    button.classList.remove('tm-success', 'tm-error');
+
+    if (state === 'success') {
+      button.classList.add('tm-success');
+      button.title = 'Chart image copied';
+      button.setAttribute('aria-label', 'Chart image copied');
+      return;
+    }
+
+    if (state === 'error') {
+      button.classList.add('tm-error');
+      button.title = 'Failed to copy chart image';
+      button.setAttribute('aria-label', 'Failed to copy chart image');
+      return;
+    }
+
+    button.title = 'Copy chart image';
+    button.setAttribute('aria-label', 'Copy chart image');
+  }
+
+  function getChartSvgCopyMarkup(svg) {
+    if (!svg) return '';
+
+    const clone = svg.cloneNode(true);
+    clone.querySelectorAll('.tm-stat-chart-hover-zone').forEach(node => node.remove());
+    clone.querySelectorAll('.tm-stat-chart-hover-line').forEach(node => node.remove());
+
+    const viewBox = String(clone.getAttribute('viewBox') || '').trim();
+    const [, , rawWidth = 580, rawHeight = 180] = viewBox.split(/\s+/).map(Number);
+    const exportWidth = Number.isFinite(rawWidth) && rawWidth > 0 ? rawWidth : 580;
+    const exportHeight = Number.isFinite(rawHeight) && rawHeight > 0 ? rawHeight : 180;
+
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', String(exportWidth));
+    clone.setAttribute('height', String(exportHeight));
+
+    const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    background.setAttribute('x', '0');
+    background.setAttribute('y', '0');
+    background.setAttribute('width', String(exportWidth));
+    background.setAttribute('height', String(exportHeight));
+    background.setAttribute('rx', '10');
+    background.setAttribute('fill', '#161616');
+    clone.insertBefore(background, clone.firstChild);
+
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = `
+      .tm-stat-chart-grid { stroke: rgba(255,255,255,.08); stroke-width: 1; }
+      .tm-stat-chart-axis { stroke: rgba(255,255,255,.18); stroke-width: 1; }
+      .tm-stat-chart-tick { fill: rgba(255,255,255,.52); font-size: 10px; font-weight: 700; }
+      .tm-stat-chart-day { fill: rgba(255,255,255,.62); font-size: 10px; font-weight: 700; }
+      .tm-stat-chart-line { fill: none; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+      .tm-stat-chart-line-bg { fill: none; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; opacity: .16; }
+      .tm-stat-chart-trend { fill: none; stroke-width: 1.5; stroke-dasharray: 6 4; opacity: .95; }
+      .tm-stat-chart-trend-ma { stroke-dasharray: 2 5; opacity: .78; }
+      .tm-stat-chart-point { stroke: rgba(17,17,17,.92); stroke-width: 1.5; }
+      text { font-family: Arial, sans-serif; }
+    `;
+    clone.insertBefore(style, background.nextSibling);
+
+    return new XMLSerializer().serializeToString(clone);
+  }
+
+  async function copyChartSvgToClipboard(svg) {
+    const markup = getChartSvgCopyMarkup(svg);
+    if (!markup) throw new Error('Chart SVG is missing');
+
+    const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Unable to render chart image'));
+        img.src = url;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth || 580;
+      canvas.height = image.naturalHeight || 180;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Canvas context is unavailable');
+      context.drawImage(image, 0, 0);
+
+      const pngBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob(result => {
+          if (result) resolve(result);
+          else reject(new Error('Unable to export PNG'));
+        }, 'image/png');
+      });
+
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'image/png': pngBlob
+        })
+      ]);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
   function renderSectionToggleChartInto(root, chartData, mode = 'popular', durationDays = 1) {
     if (!root) return;
 
@@ -5622,6 +5865,7 @@
     const body = root.querySelector('.tm-stat-chart-body');
     const title = root.querySelector('.tm-stat-chart-title');
     const tooltip = root.querySelector('.tm-stat-chart-tooltip');
+    const copyButton = root.querySelector('[data-chart-copy]');
     const durationLabel = `${durationDays}d`;
     const modeLabel = isKnownSeriesKey(mode) ? getSeriesLabel(mode) : 'Section not selected';
     const chartPref = getSummaryChartPref(chartKey, Object.keys(chartData?.durations?.[durationDays]?.modes || chartData?.durations?.[1]?.modes || {}));
@@ -5632,6 +5876,10 @@
 
     if (!body) return;
     if (title) title.textContent = `${modeLabel} / ${durationLabel}`;
+    if (copyButton) {
+      copyButton.disabled = !canCopyChartImage();
+      setChartCopyButtonState(copyButton);
+    }
 
     if (!days.length || !series.length) {
       body.innerHTML = `<div class="tm-stat-muted">No data for the last ${durationLabel}.</div>`;
@@ -5727,6 +5975,7 @@
     const svg = body.querySelector('.tm-stat-chart-svg');
     const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
     let activeLegendSeriesKey = '';
+    let copyFeedbackTimer = null;
 
     function highlightChartPoints(activeIndex = null) {
       body.querySelectorAll('[data-chart-point-index]').forEach(point => {
@@ -5840,6 +6089,30 @@
     });
 
     body.addEventListener('mouseleave', hideTooltip);
+
+    if (copyButton) {
+      copyButton.onclick = async event => {
+        event.preventDefault();
+        if (!svg || copyButton.disabled) return;
+
+        clearTimeout(copyFeedbackTimer);
+        copyButton.disabled = true;
+        setChartCopyButtonState(copyButton);
+
+        try {
+          await copyChartSvgToClipboard(svg);
+          setChartCopyButtonState(copyButton, 'success');
+        } catch (error) {
+          console.warn('[itch-stats] Failed to copy chart image', error);
+          setChartCopyButtonState(copyButton, 'error');
+        } finally {
+          copyFeedbackTimer = window.setTimeout(() => {
+            copyButton.disabled = !canCopyChartImage();
+            setChartCopyButtonState(copyButton);
+          }, 1600);
+        }
+      };
+    }
   }
 
   function sortRefreshItems(items, records) {
@@ -6098,7 +6371,9 @@
 
     const intersectionKey = getIntersectionStorageKey(game);
     if (intersectionKey) {
-      intersectionsState[intersectionKey] = Array.isArray(payload.intersections) ? deepClone(payload.intersections, []) : [];
+      intersectionsState[intersectionKey] = normalizeIntersectionItems(
+        Array.isArray(payload.intersections) ? deepClone(payload.intersections, []) : []
+      );
     }
 
     savePositions(positions);
@@ -6518,7 +6793,9 @@
               </table>
             </div>
             ${emptySeriesNote}
-            ${chartHtml}
+            <div class="tm-stat-chart-shell ${collapsed ? 'tm-hidden' : ''}">
+              ${chartHtml}
+            </div>
           </div>
         </section>
       `;
@@ -6811,7 +7088,7 @@
       }, 420);
     }
 
-    widget.querySelectorAll('.tm-stat-section-body').forEach(body => {
+    widget.querySelectorAll('.tm-stat-chart-shell').forEach(body => {
       body.style.maxHeight = body.classList.contains('tm-hidden')
         ? '0px'
         : `${body.scrollHeight}px`;
@@ -6827,7 +7104,7 @@
     widget.querySelectorAll('[data-section-toggle]').forEach(toggle => {
       toggle.addEventListener('click', () => {
         const key = toggle.getAttribute('data-section-toggle');
-        const body = toggle.nextElementSibling;
+        const body = toggle.nextElementSibling?.querySelector?.('.tm-stat-chart-shell');
         const icon = toggle.querySelector('.tm-stat-section-toggle');
         const state = loadSummarySectionState();
         const current = getSummarySectionStateEntry(state, key);
@@ -6910,6 +7187,7 @@
 
         if (input.checked) selected.add(key);
         else selected.delete(key);
+        updateBuildIntersectionButtonVisibility();
       });
     });
 
@@ -6940,7 +7218,30 @@
       triggerJsonDownload(`itch-stats-${fileNameBase || 'game'}-${EXPORT_SCHEMA_VERSION}.json`, payload);
     }
 
+    function getSelectedIntersectionParts() {
+      return normalizeIntersectionParts(
+        selectableOptions.filter(item => selected.has(`${item.type}|${normalize(item.label)}`))
+      );
+    }
+
+    function updateBuildIntersectionButtonVisibility() {
+      const buildButton = widget.querySelector('#tm-build-intersection');
+      if (!buildButton) return;
+
+      const parts = getSelectedIntersectionParts();
+      const canBuild = !!game && parts.length >= 2 && !hasIntersectionItem(intersections, parts);
+      buildButton.style.display = canBuild ? '' : 'none';
+      buildButton.disabled = !canBuild;
+      buildButton.title = !game
+        ? 'Игра не определена'
+        : (parts.length < 2
+          ? 'Выберите минимум два фильтра'
+          : `Собрать пересечение: ${parts.map(part => part.label).join(' + ')}`);
+    }
+
     function buildIntersectionFromParts(parts) {
+      if (!game) return false;
+
       const normalizedParts = normalizeIntersectionParts(parts);
       if (normalizedParts.length < 2) return false;
 
@@ -6977,6 +7278,11 @@
         const parts = getIntersectionPartsFromReferrerHref(href);
 
         if (parts.length < 2) {
+          existingButton?.remove();
+          return;
+        }
+
+        if (hasIntersectionItem(intersections, parts)) {
           existingButton?.remove();
           return;
         }
@@ -7053,10 +7359,11 @@
     const buildIntersectionButton = widget.querySelector('#tm-build-intersection');
     if (buildIntersectionButton) {
       buildIntersectionButton.addEventListener('click', () => {
-        const parts = normalizeIntersectionParts(selectableOptions.filter(item => selected.has(`${item.type}|${normalize(item.label)}`)));
+        const parts = getSelectedIntersectionParts();
         buildIntersectionFromParts(parts);
       });
     }
+    updateBuildIntersectionButtonVisibility();
 
     enhanceReferrerIntersectionButtons();
 
