@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.1
+// @version      6.1.2
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1405,6 +1405,7 @@
       fill: rgba(255,255,255,.62);
       font-size: 10px;
       font-weight: 700;
+      pointer-events: none;
     }
 
     .tm-stat-chart-line {
@@ -1561,6 +1562,27 @@
       flex: 0 0 auto;
     }
 
+    .tm-stat-chart-legend-eyeoff {
+      width: 12px;
+      height: 12px;
+      display: none;
+      flex: 0 0 auto;
+      color: rgba(255,255,255,.58);
+    }
+
+    .tm-stat-chart-legend-item.tm-series-hidden {
+      background: rgba(255,255,255,.03);
+      color: rgba(255,255,255,.52);
+    }
+
+    .tm-stat-chart-legend-item.tm-series-hidden .tm-stat-chart-legend-swatch {
+      display: none;
+    }
+
+    .tm-stat-chart-legend-item.tm-series-hidden .tm-stat-chart-legend-eyeoff {
+      display: block;
+    }
+
     .tm-stat-chart-legend-label {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1590,6 +1612,14 @@
     .tm-stat-chart-line-bg.tm-series-dimmed,
     .tm-stat-chart-trend.tm-series-dimmed {
       opacity: .12;
+    }
+
+    .tm-stat-chart-point.tm-series-hidden,
+    .tm-stat-chart-line.tm-series-hidden,
+    .tm-stat-chart-line-bg.tm-series-hidden,
+    .tm-stat-chart-trend.tm-series-hidden,
+    .tm-stat-chart-tooltip-row.tm-series-hidden {
+      display: none;
     }
 
     .tm-action-row {
@@ -1918,13 +1948,23 @@
     };
   }
 
+  function normalizeSummaryChartHiddenSeries(hiddenSeries) {
+    if (!Array.isArray(hiddenSeries)) return [];
+
+    return hiddenSeries
+      .map(key => String(key || '').trim())
+      .filter(key => key && isKnownSeriesKey(key))
+      .filter((key, index, array) => array.indexOf(key) === index);
+  }
+
   function getSummaryChartPref(chartKey, visibleModes = []) {
     const allPrefs = loadSummaryChartPrefs();
     const pref = allPrefs?.[chartKey];
     const mode = visibleModes.includes(pref?.mode) ? pref.mode : (visibleModes[0] || '');
     const duration = normalizeSummaryChartDuration(pref?.duration);
     const trends = normalizeSummaryChartTrends(pref?.trends);
-    return { mode, duration, trends };
+    const hiddenSeries = normalizeSummaryChartHiddenSeries(pref?.hiddenSeries);
+    return { mode, duration, trends, hiddenSeries };
   }
 
   function setSummaryChartPref(chartKey, pref) {
@@ -1934,7 +1974,8 @@
     allPrefs[chartKey] = {
       mode: String(pref?.mode || ''),
       duration: normalizeSummaryChartDuration(pref?.duration),
-      trends: normalizeSummaryChartTrends(pref?.trends)
+      trends: normalizeSummaryChartTrends(pref?.trends),
+      hiddenSeries: normalizeSummaryChartHiddenSeries(pref?.hiddenSeries)
     };
     saveSummaryChartPrefs(allPrefs);
   }
@@ -5522,12 +5563,20 @@
       palette = []
     } = options || {};
 
-    return series.map((item, index) => {
+    const markup = series.map((item, index) => {
       const color = item.color || palette[index % palette.length] || '#4A8CFF';
       const seriesKey = String(item.key || `${index}`);
       const backgroundPath = buildNeighborSegmentsPath(item.points, getX, getY);
       const smoothPath = buildSmoothBezierPath(item.points, getX, getY);
       const trendPaths = showTrends ? buildTrendPaths(item.points, getX, getY, durationDays, trendState) : [];
+      const unclippedTrendMarkup = trendPaths
+        .filter(trend => trend.kind === 'linear')
+        .map(trend => `<path class="tm-stat-chart-trend" data-chart-series-key="${escapeHtml(seriesKey)}" d="${trend.path}" stroke="${color}"></path>`)
+        .join('');
+      const clippedTrendMarkup = trendPaths
+        .filter(trend => trend.kind !== 'linear')
+        .map(trend => `<path class="tm-stat-chart-trend ${trend.kind === 'ma' ? 'tm-stat-chart-trend-ma' : ''}" data-chart-series-key="${escapeHtml(seriesKey)}" d="${trend.path}" stroke="${color}"></path>`)
+        .join('');
       const circles = item.points.map((point, pointIndex) => {
         if (!point) return '';
         const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
@@ -5538,13 +5587,21 @@
         `;
       }).join('');
 
-      return `
-        ${backgroundPath ? `<path class="tm-stat-chart-line-bg" data-chart-series-key="${escapeHtml(seriesKey)}" d="${backgroundPath}" stroke="${color}"></path>` : ''}
-        ${trendPaths.map(trend => `<path class="tm-stat-chart-trend ${trend.kind === 'ma' ? 'tm-stat-chart-trend-ma' : ''}" data-chart-series-key="${escapeHtml(seriesKey)}" d="${trend.path}" stroke="${color}"></path>`).join('')}
-        ${smoothPath ? `<path class="tm-stat-chart-line" data-chart-series-key="${escapeHtml(seriesKey)}" d="${smoothPath}" stroke="${color}"></path>` : ''}
-        ${circles}
-      `;
-    }).join('');
+      return {
+        clipped: `
+          ${backgroundPath ? `<path class="tm-stat-chart-line-bg" data-chart-series-key="${escapeHtml(seriesKey)}" d="${backgroundPath}" stroke="${color}"></path>` : ''}
+          ${clippedTrendMarkup}
+          ${smoothPath ? `<path class="tm-stat-chart-line" data-chart-series-key="${escapeHtml(seriesKey)}" d="${smoothPath}" stroke="${color}"></path>` : ''}
+          ${circles}
+        `,
+        unclipped: unclippedTrendMarkup
+      };
+    });
+
+    return {
+      clipped: markup.map(item => item.clipped).join(''),
+      unclipped: markup.map(item => item.unclipped).join('')
+    };
   }
 
   function renderSectionChart(chartData, options = {}) {
@@ -5601,7 +5658,7 @@
       <text class="tm-stat-chart-day" x="${getX(index)}" y="${height - 8}" text-anchor="middle">${escapeHtml(day.label)}</text>
     `).join('');
 
-    const lineMarkup = buildSeriesChartMarkup(series, {
+    const chartMarkup = buildSeriesChartMarkup(series, {
       getX,
       getY,
       durationDays: Math.max(1, days.length),
@@ -5625,7 +5682,8 @@
           ${clipPath.markup}
           ${gridLines}
           <line class="tm-stat-chart-axis" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}"></line>
-          <g clip-path="url(#${clipPath.id})">${lineMarkup}</g>
+          ${chartMarkup.unclipped}
+          <g clip-path="url(#${clipPath.id})">${chartMarkup.clipped}</g>
           ${dayLabels}
         </svg>
         ${showLegend ? `
@@ -5789,7 +5847,36 @@
     button.setAttribute('aria-label', 'Copy chart image');
   }
 
-  function getChartSvgCopyMarkup(svg) {
+  function wrapChartExportText(text, maxCharsPerLine = 42) {
+    const source = String(text || '').trim();
+    if (!source) return [];
+
+    const words = source.split(/\s+/).filter(Boolean);
+    const lines = [];
+    let currentLine = '';
+
+    words.forEach(word => {
+      if (!currentLine) {
+        currentLine = word;
+        return;
+      }
+
+      const nextLine = `${currentLine} ${word}`;
+      if (nextLine.length <= maxCharsPerLine) {
+        currentLine = nextLine;
+        return;
+      }
+
+      lines.push(currentLine);
+      currentLine = word;
+    });
+
+    if (currentLine) lines.push(currentLine);
+    return lines;
+  }
+
+  function getChartSvgCopyMarkup(root) {
+    const svg = root?.querySelector?.('.tm-stat-chart-svg');
     if (!svg) return '';
 
     const clone = svg.cloneNode(true);
@@ -5829,11 +5916,114 @@
     `;
     clone.insertBefore(style, background.nextSibling);
 
-    return new XMLSerializer().serializeToString(clone);
+    const exportSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    exportSvg.setAttribute('width', String(exportWidth));
+
+    const titleText = String(root.querySelector('.tm-stat-chart-title')?.textContent || '').trim();
+    const titleLines = wrapChartExportText(titleText, Math.max(18, Math.floor((exportWidth - 40) / 11)));
+    const titleHeight = titleLines.length ? (titleLines.length * 24) + 8 : 0;
+
+    const legendItems = Array.from(root.querySelectorAll('.tm-stat-chart-legend-item'))
+      .filter(item => !item.classList.contains('tm-series-hidden'))
+      .map(item => ({
+        label: String(item.querySelector('.tm-stat-chart-legend-label')?.textContent || '').trim(),
+        color: String(item.querySelector('.tm-stat-chart-legend-swatch')?.style?.background || '#4A8CFF').trim() || '#4A8CFF'
+      }))
+      .filter(item => item.label);
+
+    const legendPaddingX = 20;
+    const legendItemGap = 6;
+    const legendRowGap = 6;
+    const legendRowHeight = 22;
+    let legendCursorX = legendPaddingX;
+    let legendCursorY = 0;
+    const legendLayout = legendItems.map(item => {
+      const estimatedWidth = Math.min(120, Math.max(46, Math.round((item.label.length * 6.4) + 28)));
+      if (legendCursorX > legendPaddingX && legendCursorX + estimatedWidth > exportWidth - legendPaddingX) {
+        legendCursorX = legendPaddingX;
+        legendCursorY += legendRowHeight + legendRowGap;
+      }
+
+      const layout = {
+        ...item,
+        width: estimatedWidth,
+        x: legendCursorX,
+        y: legendCursorY
+      };
+      legendCursorX += estimatedWidth + legendItemGap;
+      return layout;
+    });
+    const legendHeight = legendLayout.length ? legendCursorY + legendRowHeight : 0;
+
+    const chartOffsetY = 16 + titleHeight;
+    const legendOffsetY = chartOffsetY + exportHeight + (legendHeight ? 12 : 0);
+    const totalHeight = legendOffsetY + legendHeight + 16;
+
+    exportSvg.setAttribute('height', String(totalHeight));
+    exportSvg.setAttribute('viewBox', `0 0 ${exportWidth} ${totalHeight}`);
+
+    const exportBackground = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    exportBackground.setAttribute('x', '0');
+    exportBackground.setAttribute('y', '0');
+    exportBackground.setAttribute('width', String(exportWidth));
+    exportBackground.setAttribute('height', String(totalHeight));
+    exportBackground.setAttribute('rx', '12');
+    exportBackground.setAttribute('fill', '#161616');
+    exportSvg.appendChild(exportBackground);
+
+    if (titleLines.length) {
+      titleLines.forEach((line, index) => {
+        const titleNode = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        titleNode.setAttribute('x', '20');
+        titleNode.setAttribute('y', String(36 + (index * 24)));
+        titleNode.setAttribute('fill', 'rgba(255,255,255,.76)');
+        titleNode.setAttribute('font-size', '20');
+        titleNode.setAttribute('font-weight', '800');
+        titleNode.setAttribute('font-family', 'Arial, sans-serif');
+        titleNode.textContent = line;
+        exportSvg.appendChild(titleNode);
+      });
+    }
+
+    const chartGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    chartGroup.setAttribute('transform', `translate(0 ${chartOffsetY})`);
+    chartGroup.appendChild(clone);
+    exportSvg.appendChild(chartGroup);
+
+    legendLayout.forEach(item => {
+      const pill = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      pill.setAttribute('x', String(item.x));
+      pill.setAttribute('y', String(legendOffsetY + item.y));
+      pill.setAttribute('width', String(item.width));
+      pill.setAttribute('height', String(legendRowHeight));
+      pill.setAttribute('rx', '11');
+      pill.setAttribute('fill', 'rgba(255,255,255,.05)');
+      exportSvg.appendChild(pill);
+
+      const swatch = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      swatch.setAttribute('cx', String(item.x + 12));
+      swatch.setAttribute('cy', String(legendOffsetY + item.y + 11));
+      swatch.setAttribute('r', '4');
+      swatch.setAttribute('fill', item.color);
+      exportSvg.appendChild(swatch);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', String(item.x + 22));
+      label.setAttribute('y', String(legendOffsetY + item.y + 15));
+      label.setAttribute('fill', 'rgba(255,255,255,.86)');
+      label.setAttribute('font-size', '11');
+      label.setAttribute('font-weight', '700');
+      label.setAttribute('font-family', 'Arial, sans-serif');
+      label.textContent = item.label;
+      exportSvg.appendChild(label);
+    });
+
+    return new XMLSerializer().serializeToString(exportSvg);
   }
 
-  async function copyChartSvgToClipboard(svg) {
-    const markup = getChartSvgCopyMarkup(svg);
+  async function copyChartSvgToClipboard(root) {
+    const markup = getChartSvgCopyMarkup(root);
     if (!markup) throw new Error('Chart SVG is missing');
 
     const blob = new Blob([markup], { type: 'image/svg+xml;charset=utf-8' });
@@ -5883,9 +6073,11 @@
     const modeLabel = isKnownSeriesKey(mode) ? getSeriesLabel(mode) : 'Section not selected';
     const chartPref = getSummaryChartPref(chartKey, Object.keys(chartData?.durations?.[durationDays]?.modes || chartData?.durations?.[1]?.modes || {}));
     const trendState = normalizeSummaryChartTrends(chartPref.trends);
+    const hiddenSeriesSet = new Set(normalizeSummaryChartHiddenSeries(chartPref.hiddenSeries));
     const durationData = chartData?.durations?.[durationDays] || chartData?.durations?.[1] || null;
     const days = Array.isArray(durationData?.days) ? durationData.days : [];
-    const series = Array.isArray(durationData?.modes?.[mode]) ? durationData.modes[mode] : [];
+    const allSeries = Array.isArray(durationData?.modes?.[mode]) ? durationData.modes[mode] : [];
+    const series = allSeries.filter(item => !hiddenSeriesSet.has(String(item?.key || '')));
 
     if (!body) return;
     if (title) title.textContent = `${modeLabel} / ${durationLabel}`;
@@ -5894,7 +6086,7 @@
       setChartCopyButtonState(copyButton);
     }
 
-    if (!days.length || !series.length) {
+    if (!days.length || !allSeries.length) {
       body.innerHTML = `<div class="tm-stat-muted">No data for the last ${durationLabel}.</div>`;
       if (tooltip) {
         tooltip.classList.remove('tm-visible');
@@ -5902,6 +6094,34 @@
       }
       return;
     }
+
+    if (!series.length) {
+      const legendMarkup = allSeries.map(item => `
+        <div class="tm-stat-chart-legend-item tm-series-hidden" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
+          <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
+          <span class="tm-stat-chart-legend-eyeoff" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="12" height="12">
+              <path fill="currentColor" d="M1.5 2.56 2.56 1.5l11.94 11.94-1.06 1.06-2.15-2.15A9.54 9.54 0 0 1 8 13C4.18 13 1.43 10.5.27 8.78a1.43 1.43 0 0 1 0-1.56A13.3 13.3 0 0 1 3.6 3.8L1.5 2.56Zm7.44 7.44-2.38-2.38a2 2 0 0 0 2.38 2.38Zm3.93-.19L10.9 7.84a2.99 2.99 0 0 0-3.74-3.74L5.63 2.57A8.95 8.95 0 0 1 8 3c3.82 0 6.57 2.5 7.73 4.22.36.53.36 1.03 0 1.56a13.62 13.62 0 0 1-2.86 3.03Z"></path>
+            </svg>
+          </span>
+          <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
+        </div>
+      `).join('');
+      const trendControlsMarkup = `
+        <label class="tm-stat-chart-trend-control">
+          <input type="checkbox" data-chart-trend="linear" ${trendState.linear ? 'checked' : ''}>
+          <span>Линейный тренд</span>
+        </label>
+        <label class="tm-stat-chart-trend-control">
+          <input type="checkbox" data-chart-trend="ma" ${trendState.ma ? 'checked' : ''}>
+          <span>Скользящее среднее (${durationDays === 1 ? '3 точки' : '5 точек'})</span>
+        </label>
+      `;
+      body.innerHTML = `
+        <div class="tm-stat-muted">All series are hidden.</div>
+        <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
+      `;
+    } else {
 
     const width = 580;
     const height = 180;
@@ -5940,7 +6160,7 @@
       <text class="tm-stat-chart-day" x="${getX(index)}" y="${height - 8}" text-anchor="middle">${escapeHtml(day.label)}</text>
     `).join('');
 
-    const lineMarkup = buildSeriesChartMarkup(series, {
+    const chartMarkup = buildSeriesChartMarkup(series, {
       getX,
       getY,
       durationDays,
@@ -5955,9 +6175,14 @@
       return `<rect class="tm-stat-chart-hover-zone" data-chart-day-index="${index}" x="${prevX}" y="${margin.top}" width="${Math.max(1, nextX - prevX)}" height="${plotHeight}"></rect>`;
     }).join('');
 
-    const legendMarkup = series.map(item => `
-      <div class="tm-stat-chart-legend-item" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
+    const legendMarkup = allSeries.map(item => `
+      <div class="tm-stat-chart-legend-item ${hiddenSeriesSet.has(String(item.key || '')) ? 'tm-series-hidden' : ''}" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
         <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
+        <span class="tm-stat-chart-legend-eyeoff" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="12" height="12">
+            <path fill="currentColor" d="M1.5 2.56 2.56 1.5l11.94 11.94-1.06 1.06-2.15-2.15A9.54 9.54 0 0 1 8 13C4.18 13 1.43 10.5.27 8.78a1.43 1.43 0 0 1 0-1.56A13.3 13.3 0 0 1 3.6 3.8L1.5 2.56Zm7.44 7.44-2.38-2.38a2 2 0 0 0 2.38 2.38Zm3.93-.19L10.9 7.84a2.99 2.99 0 0 0-3.74-3.74L5.63 2.57A8.95 8.95 0 0 1 8 3c3.82 0 6.57 2.5 7.73 4.22.36.53.36 1.03 0 1.56a13.62 13.62 0 0 1-2.86 3.03Z"></path>
+          </svg>
+        </span>
         <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
       </div>
     `).join('');
@@ -5977,13 +6202,15 @@
         ${clipPath.markup}
         ${gridLines}
         <line class="tm-stat-chart-axis" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}"></line>
-        <g clip-path="url(#${clipPath.id})">${lineMarkup}</g>
+        ${chartMarkup.unclipped}
+        <g clip-path="url(#${clipPath.id})">${chartMarkup.clipped}</g>
         <line class="tm-stat-chart-hover-line" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" visibility="hidden"></line>
         ${hoverZones}
         ${dayLabels}
       </svg>
       <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
     `;
+    }
 
     const svg = body.querySelector('.tm-stat-chart-svg');
     const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
@@ -6001,14 +6228,18 @@
       activeLegendSeriesKey = String(seriesKey || '');
       body.querySelectorAll('[data-chart-series-key]').forEach(node => {
         const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
+        const hidden = hiddenSeriesSet.has(nodeSeriesKey);
         node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
         node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+        node.classList.toggle('tm-series-hidden', hidden);
       });
       if (tooltip) {
         tooltip.querySelectorAll('[data-chart-series-key]').forEach(node => {
           const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
+          const hidden = hiddenSeriesSet.has(nodeSeriesKey);
           node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
           node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+          node.classList.toggle('tm-series-hidden', hidden);
         });
       }
     }
@@ -6073,8 +6304,9 @@
         applySeriesHighlight(activeLegendSeriesKey);
       });
 
-      zone.addEventListener('mouseleave', hideTooltip);
     });
+
+    svg?.addEventListener('mouseleave', hideTooltip);
 
     body.querySelectorAll('[data-chart-trend]').forEach(input => {
       input.addEventListener('change', () => {
@@ -6085,7 +6317,8 @@
         setSummaryChartPref(chartKey, {
           mode,
           duration: durationDays,
-          trends: nextTrends
+          trends: nextTrends,
+          hiddenSeries: Array.from(hiddenSeriesSet)
         });
         renderSectionToggleChartInto(root, chartData, mode, durationDays);
       });
@@ -6095,10 +6328,32 @@
       const seriesKey = item.getAttribute('data-chart-series-key') || '';
       const activate = () => applySeriesHighlight(seriesKey);
       const deactivate = () => applySeriesHighlight('');
+      const toggleSeries = () => {
+        const nextHiddenSeries = new Set(hiddenSeriesSet);
+        if (nextHiddenSeries.has(seriesKey)) nextHiddenSeries.delete(seriesKey);
+        else nextHiddenSeries.add(seriesKey);
+
+        setSummaryChartPref(chartKey, {
+          mode,
+          duration: durationDays,
+          trends: trendState,
+          hiddenSeries: Array.from(nextHiddenSeries)
+        });
+        renderSectionToggleChartInto(root, chartData, mode, durationDays);
+      };
       item.addEventListener('mouseenter', activate);
       item.addEventListener('focus', activate);
       item.addEventListener('mouseleave', deactivate);
       item.addEventListener('blur', deactivate);
+      item.addEventListener('click', event => {
+        event.preventDefault();
+        toggleSeries();
+      });
+      item.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggleSeries();
+      });
     });
 
     body.addEventListener('mouseleave', hideTooltip);
@@ -6113,7 +6368,7 @@
         setChartCopyButtonState(copyButton);
 
         try {
-          await copyChartSvgToClipboard(svg);
+          await copyChartSvgToClipboard(root);
           setChartCopyButtonState(copyButton, 'success');
         } catch (error) {
           console.warn('[itch-stats] Failed to copy chart image', error);
@@ -7000,7 +7255,8 @@
           setSummaryChartPref(chartKey, {
             mode: currentMode,
             duration: currentDuration,
-            trends: getSummaryChartPref(chartKey, visibleSeries).trends
+            trends: getSummaryChartPref(chartKey, visibleSeries).trends,
+            hiddenSeries: getSummaryChartPref(chartKey, visibleSeries).hiddenSeries
           });
           root.querySelectorAll('[data-chart-duration]').forEach(other => {
             other.classList.toggle('tm-active', other === button);
@@ -7167,7 +7423,8 @@
         setSummaryChartPref(sectionKey, {
           mode: seriesKey,
           duration: currentPref.duration,
-          trends: currentPref.trends
+          trends: currentPref.trends,
+          hiddenSeries: currentPref.hiddenSeries
         });
         createSummaryStatsWidget();
       });
