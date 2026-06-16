@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.5
+// @version      6.2.0
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -242,17 +242,22 @@
     if (typeof value === 'boolean') {
       return {
         enabled: defaults.enabled,
-        collapsed: value
+        collapsed: value,
+        touched: true
       };
     }
 
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return defaults;
+      return {
+        ...defaults,
+        touched: false
+      };
     }
 
     return {
       enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
-      collapsed: typeof value.collapsed === 'boolean' ? value.collapsed : defaults.collapsed
+      collapsed: typeof value.collapsed === 'boolean' ? value.collapsed : defaults.collapsed,
+      touched: value.touched === true
     };
   }
 
@@ -1959,7 +1964,7 @@
 
     return hiddenSeries
       .map(key => String(key || '').trim())
-      .filter(key => key && isKnownSeriesKey(key))
+      .filter(Boolean)
       .filter((key, index, array) => array.indexOf(key) === index);
   }
 
@@ -5385,6 +5390,21 @@
     }, []);
   }
 
+  function splitChartCoordinatesByNeighboringPoints(coords) {
+    return coords.reduce((groups, coord) => {
+      const currentGroup = groups[groups.length - 1];
+      const previousCoord = currentGroup?.[currentGroup.length - 1];
+
+      if (!previousCoord || coord.index - previousCoord.index !== 1) {
+        groups.push([coord]);
+      } else {
+        currentGroup.push(coord);
+      }
+
+      return groups;
+    }, []);
+  }
+
   let chartClipPathSequence = 0;
 
   function getChartClipPathMarkup(margin, plotWidth, plotHeight, padding = 10) {
@@ -5405,17 +5425,25 @@
     const coords = getChartCoordinates(points, getX, getY);
     if (coords.length < 2) return '';
 
-    let path = `M${coords[0].x} ${coords[0].y}`;
-    for (let index = 1; index < coords.length; index += 1) {
-      path += ` L${coords[index].x} ${coords[index].y}`;
-    }
-
-    return path;
+    return splitChartCoordinatesByNeighboringPoints(coords)
+      .filter(group => group.length >= 2)
+      .map(group => group.reduce((path, coord, index) => {
+        return `${path}${index === 0 ? 'M' : ' L'}${coord.x} ${coord.y}`;
+      }, ''))
+      .join(' ');
   }
 
   function buildSmoothBezierPath(points, getX, getY) {
     const coords = getChartCoordinates(points, getX, getY);
     if (coords.length < 2) return '';
+
+    return splitChartCoordinatesByNeighboringPoints(coords)
+      .filter(group => group.length >= 2)
+      .map(group => buildSmoothBezierPathForCoordinates(group, getY))
+      .join(' ');
+  }
+
+  function buildSmoothBezierPathForCoordinates(coords, getY) {
     if (coords.length === 2) {
       return `M${coords[0].x} ${coords[0].y} L${coords[1].x} ${coords[1].y}`;
     }
@@ -5480,7 +5508,7 @@
     return path;
   }
 
-  function buildLinearTrendPath(points, getX, getY) {
+  function buildLinearTrendPath(points, getX, getY, indexRange = {}) {
     const coords = getChartCoordinates(points, getX, getY);
     if (coords.length < 2) return '';
 
@@ -5500,8 +5528,8 @@
     const denominator = count * sumXX - sumX * sumX;
     const slope = denominator ? ((count * sumXY) - (sumX * sumY)) / denominator : 0;
     const intercept = count ? (sumY - slope * sumX) / count : 0;
-    const startIndex = coords[0].index;
-    const endIndex = coords[coords.length - 1].index;
+    const startIndex = Number.isFinite(indexRange.start) ? indexRange.start : coords[0].index;
+    const endIndex = Number.isFinite(indexRange.end) ? indexRange.end : coords[coords.length - 1].index;
     const startValue = intercept + slope * startIndex;
     const endValue = intercept + slope * endIndex;
 
@@ -5527,13 +5555,13 @@
     });
   }
 
-  function buildTrendPaths(points, getX, getY, durationDays, trends) {
+  function buildTrendPaths(points, getX, getY, durationDays, trends, indexRange = {}) {
     const trendState = normalizeSummaryChartTrends(trends);
     const movingAverageWindow = durationDays === 1 ? 3 : 5;
     const result = [];
 
     if (trendState.linear) {
-      const linearPath = buildLinearTrendPath(points, getX, getY);
+      const linearPath = buildLinearTrendPath(points, getX, getY, indexRange);
       if (linearPath) {
         result.push({
           kind: 'linear',
@@ -5566,6 +5594,7 @@
       durationDays = 7,
       showTrends = false,
       trendState = null,
+      xIndexRange = {},
       palette = []
     } = options || {};
 
@@ -5574,7 +5603,7 @@
       const seriesKey = String(item.key || `${index}`);
       const backgroundPath = buildNeighborSegmentsPath(item.points, getX, getY);
       const smoothPath = buildSmoothBezierPath(item.points, getX, getY);
-      const trendPaths = showTrends ? buildTrendPaths(item.points, getX, getY, durationDays, trendState) : [];
+      const trendPaths = showTrends ? buildTrendPaths(item.points, getX, getY, durationDays, trendState, xIndexRange) : [];
       const unclippedTrendMarkup = trendPaths
         .filter(trend => trend.kind === 'linear')
         .map(trend => `<path class="tm-stat-chart-trend" data-chart-series-key="${escapeHtml(seriesKey)}" d="${trend.path}" stroke="${color}"></path>`)
@@ -5668,6 +5697,10 @@
       getX,
       getY,
       durationDays: Math.max(1, days.length),
+      xIndexRange: {
+        start: 0,
+        end: days.length - 1
+      },
       palette
     });
     const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight, visualPadding);
@@ -6173,7 +6206,11 @@
       getY,
       durationDays,
       showTrends: true,
-      trendState
+      trendState,
+      xIndexRange: {
+        start: 0,
+        end: days.length - 1
+      }
     });
     const clipPath = getChartClipPathMarkup(margin, plotWidth, plotHeight, visualPadding);
 
@@ -7082,7 +7119,9 @@
     function sectionHtml(key, title, rows, options = {}) {
       const sectionUiState = getSummarySectionStateEntry(sectionState, key);
       const autoCollapsed = rows.length < 4;
-      const collapsed = autoCollapsed || !!sectionUiState.collapsed;
+      const collapsed = sectionUiState.touched
+        ? !!sectionUiState.collapsed
+        : autoCollapsed || !!sectionUiState.collapsed;
       const enabled = !!sectionUiState.enabled;
       const activeSeriesKey = getSectionSeriesMode(key);
       const sortedRows = sortRowsForSeries(rows, activeSeriesKey);
@@ -7462,7 +7501,8 @@
 
         state[key] = {
           ...current,
-          collapsed: nextCollapsed
+          collapsed: nextCollapsed,
+          touched: true
         };
         saveSummarySectionState(state);
 
