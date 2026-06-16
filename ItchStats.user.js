@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.3
+// @version      6.1.4
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -6093,56 +6093,58 @@
       setChartCopyButtonState(copyButton);
     }
 
-    if (!days.length || !allSeries.length) {
-      body.innerHTML = `<div class="tm-stat-muted">No data for the last ${durationLabel}.</div>`;
-      if (tooltip) {
-        tooltip.classList.remove('tm-visible');
-        tooltip.innerHTML = '';
+    try {
+      if (!days.length || !allSeries.length) {
+        body.innerHTML = `<div class="tm-stat-muted">No data for the last ${durationLabel}.</div>`;
+        if (tooltip) {
+          tooltip.classList.remove('tm-visible');
+          tooltip.innerHTML = '';
+        }
+        return;
       }
-      return;
-    }
 
-    if (!series.length) {
-      const legendMarkup = allSeries.map(item => `
-        <div class="tm-stat-chart-legend-item tm-series-hidden" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
-          <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
-          <span class="tm-stat-chart-legend-eyeoff" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="12" height="12">
-              <path fill="currentColor" d="M1.5 2.56 2.56 1.5l11.94 11.94-1.06 1.06-2.15-2.15A9.54 9.54 0 0 1 8 13C4.18 13 1.43 10.5.27 8.78a1.43 1.43 0 0 1 0-1.56A13.3 13.3 0 0 1 3.6 3.8L1.5 2.56Zm7.44 7.44-2.38-2.38a2 2 0 0 0 2.38 2.38Zm3.93-.19L10.9 7.84a2.99 2.99 0 0 0-3.74-3.74L5.63 2.57A8.95 8.95 0 0 1 8 3c3.82 0 6.57 2.5 7.73 4.22.36.53.36 1.03 0 1.56a13.62 13.62 0 0 1-2.86 3.03Z"></path>
-            </svg>
-          </span>
-          <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
-        </div>
-      `).join('');
-      const trendControlsMarkup = `
-        <label class="tm-stat-chart-trend-control">
-          <input type="checkbox" data-chart-trend="linear" ${trendState.linear ? 'checked' : ''}>
-          <span>Линейный тренд</span>
-        </label>
-        <label class="tm-stat-chart-trend-control">
-          <input type="checkbox" data-chart-trend="ma" ${trendState.ma ? 'checked' : ''}>
-          <span>Скользящее среднее (${durationDays === 1 ? '3 точки' : '5 точек'})</span>
-        </label>
-      `;
-      body.innerHTML = `
-        <div class="tm-stat-muted">All series are hidden.</div>
-        <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
-      `;
-    } else {
+      if (!series.length) {
+        const legendMarkup = allSeries.map(item => `
+          <div class="tm-stat-chart-legend-item tm-series-hidden" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
+            <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
+            <span class="tm-stat-chart-legend-eyeoff" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="12" height="12">
+                <path fill="currentColor" d="M1.5 2.56 2.56 1.5l11.94 11.94-1.06 1.06-2.15-2.15A9.54 9.54 0 0 1 8 13C4.18 13 1.43 10.5.27 8.78a1.43 1.43 0 0 1 0-1.56A13.3 13.3 0 0 1 3.6 3.8L1.5 2.56Zm7.44 7.44-2.38-2.38a2 2 0 0 0 2.38 2.38Zm3.93-.19L10.9 7.84a2.99 2.99 0 0 0-3.74-3.74L5.63 2.57A8.95 8.95 0 0 1 8 3c3.82 0 6.57 2.5 7.73 4.22.36.53.36 1.03 0 1.56a13.62 13.62 0 0 1-2.86 3.03Z"></path>
+              </svg>
+            </span>
+            <span class="tm-stat-chart-legend-label">${escapeHtml(item.label)}</span>
+          </div>
+        `).join('');
+        const trendControlsMarkup = `
+          <label class="tm-stat-chart-trend-control">
+            <input type="checkbox" data-chart-trend="linear" ${trendState.linear ? 'checked' : ''}>
+            <span>Линейный тренд</span>
+          </label>
+          <label class="tm-stat-chart-trend-control">
+            <input type="checkbox" data-chart-trend="ma" ${trendState.ma ? 'checked' : ''}>
+            <span>Скользящее среднее (${durationDays === 1 ? '3 точки' : '5 точек'})</span>
+          </label>
+        `;
+        body.innerHTML = `
+          <div class="tm-stat-muted">All series are hidden.</div>
+          <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
+        `;
+        return;
+      }
 
-    const width = 580;
-    const height = 180;
-    const margin = { top: 8, right: 12, bottom: 28, left: 44 };
-    const plotWidth = width - margin.left - margin.right;
-    const plotHeight = height - margin.top - margin.bottom;
-    const visualPadding = 10;
-    const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
-    const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
+      const width = 580;
+      const height = 180;
+      const margin = { top: 8, right: 12, bottom: 28, left: 44 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const visualPadding = 10;
+      const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
+      const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
 
-    if (!values.length) {
-      body.innerHTML = `<div class="tm-stat-muted">No exact rank data for the last ${durationLabel}.</div>`;
-      return;
-    }
+      if (!values.length) {
+        body.innerHTML = `<div class="tm-stat-muted">No exact rank data for the last ${durationLabel}.</div>`;
+        return;
+      }
 
     let minValue = Math.min(...values);
     let maxValue = Math.max(...values);
@@ -6217,18 +6219,17 @@
       </svg>
       <div class="tm-stat-chart-legend">${legendMarkup}${trendControlsMarkup}</div>
     `;
-    }
 
-    const svg = body.querySelector('.tm-stat-chart-svg');
-    const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
-    let activeLegendSeriesKey = '';
-    let activeGraphSeriesKey = '';
-    let copyFeedbackTimer = null;
-    const hoverRanges = days.map((day, index) => ({
-      index,
-      startX: index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2,
-      endX: index === days.length - 1 ? width - margin.right : (getX(index) + getX(index + 1)) / 2
-    }));
+      const svg = body.querySelector('.tm-stat-chart-svg');
+      const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
+      let activeLegendSeriesKey = '';
+      let activeGraphSeriesKey = '';
+      let copyFeedbackTimer = null;
+      const hoverRanges = days.map((day, index) => ({
+        index,
+        startX: index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2,
+        endX: index === days.length - 1 ? width - margin.right : (getX(index) + getX(index + 1)) / 2
+      }));
 
     function highlightChartPoints(activeIndex = null) {
       body.querySelectorAll('[data-chart-point-index]').forEach(point => {
@@ -6410,30 +6411,43 @@
       });
     });
 
-    body.addEventListener('mouseleave', hideTooltip);
+      body.addEventListener('mouseleave', hideTooltip);
 
-    if (copyButton) {
-      copyButton.onclick = async event => {
-        event.preventDefault();
-        if (!svg || copyButton.disabled) return;
+      if (copyButton) {
+        copyButton.onclick = async event => {
+          event.preventDefault();
+          if (!svg || copyButton.disabled) return;
 
-        clearTimeout(copyFeedbackTimer);
-        copyButton.disabled = true;
-        setChartCopyButtonState(copyButton);
+          clearTimeout(copyFeedbackTimer);
+          copyButton.disabled = true;
+          setChartCopyButtonState(copyButton);
 
-        try {
-          await copyChartSvgToClipboard(root);
-          setChartCopyButtonState(copyButton, 'success');
-        } catch (error) {
-          console.warn('[itch-stats] Failed to copy chart image', error);
-          setChartCopyButtonState(copyButton, 'error');
-        } finally {
-          copyFeedbackTimer = window.setTimeout(() => {
-            copyButton.disabled = !canCopyChartImage();
-            setChartCopyButtonState(copyButton);
-          }, 1600);
-        }
-      };
+          try {
+            await copyChartSvgToClipboard(root);
+            setChartCopyButtonState(copyButton, 'success');
+          } catch (error) {
+            console.warn('[itch-stats] Failed to copy chart image', error);
+            setChartCopyButtonState(copyButton, 'error');
+          } finally {
+            copyFeedbackTimer = window.setTimeout(() => {
+              copyButton.disabled = !canCopyChartImage();
+              setChartCopyButtonState(copyButton);
+            }, 1600);
+          }
+        };
+      }
+    } catch (error) {
+      console.warn('[itch-stats] Failed to render chart', {
+        chartKey,
+        mode,
+        durationDays,
+        error
+      });
+      body.innerHTML = `<div class="tm-stat-muted">Failed to render chart.</div>`;
+      if (tooltip) {
+        tooltip.classList.remove('tm-visible');
+        tooltip.innerHTML = '';
+      }
     }
   }
 
@@ -7300,7 +7314,11 @@
         button.classList.toggle('tm-active', buttonDuration === currentDuration);
       });
 
-      renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+      try {
+        renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+      } catch (error) {
+        console.warn('[itch-stats] Failed to initialize chart', { chartKey, error });
+      }
 
       root.querySelectorAll('[data-chart-duration]').forEach(button => {
         button.addEventListener('click', () => {
@@ -7315,7 +7333,15 @@
           root.querySelectorAll('[data-chart-duration]').forEach(other => {
             other.classList.toggle('tm-active', other === button);
           });
-          renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+          try {
+            renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+          } catch (error) {
+            console.warn('[itch-stats] Failed to update chart duration', {
+              chartKey,
+              duration: currentDuration,
+              error
+            });
+          }
         });
       });
     });
