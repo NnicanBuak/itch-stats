@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.2
+// @version      6.1.3
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1462,6 +1462,7 @@
     .tm-stat-chart-hover-zone {
       fill: transparent;
       cursor: crosshair;
+      pointer-events: none;
     }
 
     .tm-stat-chart-tooltip {
@@ -1612,6 +1613,13 @@
     .tm-stat-chart-line-bg.tm-series-dimmed,
     .tm-stat-chart-trend.tm-series-dimmed {
       opacity: .12;
+    }
+
+    .tm-stat-chart-line.tm-series-active,
+    .tm-stat-chart-line-bg.tm-series-active,
+    .tm-stat-chart-trend.tm-series-active,
+    .tm-stat-chart-point.tm-series-active {
+      opacity: 1;
     }
 
     .tm-stat-chart-point.tm-series-hidden,
@@ -6215,7 +6223,13 @@
     const svg = body.querySelector('.tm-stat-chart-svg');
     const hoverLine = body.querySelector('.tm-stat-chart-hover-line');
     let activeLegendSeriesKey = '';
+    let activeGraphSeriesKey = '';
     let copyFeedbackTimer = null;
+    const hoverRanges = days.map((day, index) => ({
+      index,
+      startX: index === 0 ? margin.left : (getX(index - 1) + getX(index)) / 2,
+      endX: index === days.length - 1 ? width - margin.right : (getX(index) + getX(index + 1)) / 2
+    }));
 
     function highlightChartPoints(activeIndex = null) {
       body.querySelectorAll('[data-chart-point-index]').forEach(point => {
@@ -6224,24 +6238,84 @@
       });
     }
 
-    function applySeriesHighlight(seriesKey = '') {
-      activeLegendSeriesKey = String(seriesKey || '');
+    function syncSeriesHighlight() {
+      const activeSeriesKey = activeGraphSeriesKey || activeLegendSeriesKey;
       body.querySelectorAll('[data-chart-series-key]').forEach(node => {
         const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
         const hidden = hiddenSeriesSet.has(nodeSeriesKey);
-        node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
-        node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+        node.classList.toggle('tm-series-dimmed', !!activeSeriesKey && nodeSeriesKey !== activeSeriesKey);
+        node.classList.toggle('tm-series-active', !!activeSeriesKey && nodeSeriesKey === activeSeriesKey);
         node.classList.toggle('tm-series-hidden', hidden);
       });
       if (tooltip) {
         tooltip.querySelectorAll('[data-chart-series-key]').forEach(node => {
           const nodeSeriesKey = String(node.getAttribute('data-chart-series-key') || '');
           const hidden = hiddenSeriesSet.has(nodeSeriesKey);
-          node.classList.toggle('tm-series-dimmed', !!activeLegendSeriesKey && nodeSeriesKey !== activeLegendSeriesKey);
-          node.classList.toggle('tm-series-active', !!activeLegendSeriesKey && nodeSeriesKey === activeLegendSeriesKey);
+          node.classList.toggle('tm-series-dimmed', !!activeSeriesKey && nodeSeriesKey !== activeSeriesKey);
+          node.classList.toggle('tm-series-active', !!activeSeriesKey && nodeSeriesKey === activeSeriesKey);
           node.classList.toggle('tm-series-hidden', hidden);
         });
       }
+    }
+
+    function applyLegendSeriesHighlight(seriesKey = '') {
+      activeLegendSeriesKey = String(seriesKey || '');
+      syncSeriesHighlight();
+    }
+
+    function applyGraphSeriesHighlight(seriesKey = '') {
+      activeGraphSeriesKey = String(seriesKey || '');
+      syncSeriesHighlight();
+    }
+
+    function showTooltipAtIndex(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= days.length) return;
+
+      const x = getX(index);
+      const day = days[index];
+      highlightChartPoints(index);
+      const rows = series.map(item => ({
+        key: item.key,
+        label: item.label,
+        color: item.color,
+        point: item.points[index]
+      })).sort((a, b) => {
+        const aValue = Number(a.point?.value);
+        const bValue = Number(b.point?.value);
+        const aHasValue = Number.isFinite(aValue);
+        const bHasValue = Number.isFinite(bValue);
+
+        if (aHasValue && bHasValue) return aValue - bValue;
+        if (aHasValue) return -1;
+        if (bHasValue) return 1;
+        return a.label.localeCompare(b.label);
+      });
+
+      if (hoverLine) {
+        hoverLine.setAttribute('x1', String(x));
+        hoverLine.setAttribute('x2', String(x));
+        hoverLine.setAttribute('visibility', 'visible');
+      }
+
+      if (!tooltip || !svg) return;
+
+      tooltip.innerHTML = `
+        <div class="tm-stat-chart-tooltip-day">${escapeHtml(day.fullLabel || day.label)}</div>
+        ${rows.map(row => `
+          <div class="tm-stat-chart-tooltip-row" data-chart-series-key="${escapeHtml(row.key)}">
+            <span class="tm-stat-chart-tooltip-dot" style="background:${row.color}"></span>
+            <span class="tm-stat-chart-tooltip-label" title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>
+            <span class="tm-stat-chart-tooltip-value">${row.point ? `#${row.point.value}` : '--'}</span>
+          </div>
+        `).join('')}
+      `;
+
+      const rect = root.getBoundingClientRect();
+      const plotX = (x / width) * rect.width;
+      tooltip.style.left = `${Math.min(Math.max(plotX + 12, 8), Math.max(8, rect.width - 228))}px`;
+      tooltip.style.top = '44px';
+      tooltip.classList.add('tm-visible');
+      syncSeriesHighlight();
     }
 
     function hideTooltip() {
@@ -6251,62 +6325,43 @@
       }
       if (hoverLine) hoverLine.setAttribute('visibility', 'hidden');
       highlightChartPoints();
-      applySeriesHighlight(activeLegendSeriesKey);
+      syncSeriesHighlight();
     }
 
-    body.querySelectorAll('[data-chart-day-index]').forEach(zone => {
-      zone.addEventListener('mouseenter', () => {
-        const index = Number(zone.getAttribute('data-chart-day-index'));
-        const x = getX(index);
-        const day = days[index];
-        highlightChartPoints(index);
-        const rows = series.map(item => ({
-          key: item.key,
-          label: item.label,
-          color: item.color,
-          point: item.points[index]
-        })).sort((a, b) => {
-          const aValue = Number(a.point?.value);
-          const bValue = Number(b.point?.value);
-          const aHasValue = Number.isFinite(aValue);
-          const bHasValue = Number.isFinite(bValue);
+    svg?.addEventListener('mousemove', event => {
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
 
-          if (aHasValue && bHasValue) return aValue - bValue;
-          if (aHasValue) return -1;
-          if (bHasValue) return 1;
-          return a.label.localeCompare(b.label);
-        });
+      const svgX = ((event.clientX - rect.left) / rect.width) * width;
+      const svgY = ((event.clientY - rect.top) / rect.height) * height;
+      const inPlot = svgX >= margin.left && svgX <= (width - margin.right) && svgY >= margin.top && svgY <= (height - margin.bottom);
+      if (!inPlot) {
+        hideTooltip();
+        return;
+      }
 
-        if (hoverLine) {
-          hoverLine.setAttribute('x1', String(x));
-          hoverLine.setAttribute('x2', String(x));
-          hoverLine.setAttribute('visibility', 'visible');
-        }
+      const hoveredRange = hoverRanges.find(range => svgX >= range.startX && svgX <= range.endX);
+      if (!hoveredRange) {
+        hideTooltip();
+        return;
+      }
 
-        if (!tooltip || !svg) return;
-
-        tooltip.innerHTML = `
-          <div class="tm-stat-chart-tooltip-day">${escapeHtml(day.fullLabel || day.label)}</div>
-          ${rows.map(row => `
-            <div class="tm-stat-chart-tooltip-row" data-chart-series-key="${escapeHtml(row.key)}">
-              <span class="tm-stat-chart-tooltip-dot" style="background:${row.color}"></span>
-              <span class="tm-stat-chart-tooltip-label" title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>
-              <span class="tm-stat-chart-tooltip-value">${row.point ? `#${row.point.value}` : '--'}</span>
-            </div>
-          `).join('')}
-        `;
-
-        const rect = root.getBoundingClientRect();
-        const plotX = (x / width) * rect.width;
-        tooltip.style.left = `${Math.min(Math.max(plotX + 12, 8), Math.max(8, rect.width - 228))}px`;
-        tooltip.style.top = `44px`;
-        tooltip.classList.add('tm-visible');
-        applySeriesHighlight(activeLegendSeriesKey);
-      });
-
+      showTooltipAtIndex(hoveredRange.index);
     });
 
-    svg?.addEventListener('mouseleave', hideTooltip);
+    svg?.addEventListener('mouseleave', () => {
+      applyGraphSeriesHighlight('');
+      hideTooltip();
+    });
+
+    svg?.querySelectorAll('[data-chart-series-key]').forEach(node => {
+      node.addEventListener('mouseenter', () => {
+        applyGraphSeriesHighlight(node.getAttribute('data-chart-series-key') || '');
+      });
+      node.addEventListener('mouseleave', () => {
+        applyGraphSeriesHighlight('');
+      });
+    });
 
     body.querySelectorAll('[data-chart-trend]').forEach(input => {
       input.addEventListener('change', () => {
@@ -6326,8 +6381,8 @@
 
     body.querySelectorAll('.tm-stat-chart-legend-item[data-chart-series-key]').forEach(item => {
       const seriesKey = item.getAttribute('data-chart-series-key') || '';
-      const activate = () => applySeriesHighlight(seriesKey);
-      const deactivate = () => applySeriesHighlight('');
+      const activate = () => applyLegendSeriesHighlight(seriesKey);
+      const deactivate = () => applyLegendSeriesHighlight('');
       const toggleSeries = () => {
         const nextHiddenSeries = new Set(hiddenSeriesSet);
         if (nextHiddenSeries.has(seriesKey)) nextHiddenSeries.delete(seriesKey);
