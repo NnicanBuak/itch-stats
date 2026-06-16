@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.0
+// @version      6.1.1
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -2073,13 +2073,9 @@
   }
 
   function getMetaSectionLabelsForSummary(meta, sectionKey) {
-    const liveLabels = Array.isArray(meta?.sections?.[sectionKey]?.labels)
+    return Array.isArray(meta?.sections?.[sectionKey]?.labels)
       ? meta.sections[sectionKey].labels.map(label => normalizeSectionLabel(sectionKey, label))
       : getRecordSectionLabels({ meta }, sectionKey);
-    const importedLabels = Array.isArray(meta?.importedHiddenSections?.[sectionKey])
-      ? meta.importedHiddenSections[sectionKey].map(label => normalizeSectionLabel(sectionKey, label))
-      : [];
-    return normalizeLabelList([liveLabels, importedLabels]);
   }
 
   function getDerivedSectionLabelsForSummary(records = [], sectionKey = '') {
@@ -6209,9 +6205,9 @@
     const mainLabels = SEARCH_SERIES.map(item => item.label);
     const sectionsData = getFilterSectionConfigs().reduce((acc, section) => {
       const sectionLinks = getRecordSectionLinks(meta, section.key);
+      const liveSummaryLabels = getMetaSectionLabelsForSummary(meta, section.key);
       const summaryLabels = [
-        ...getMetaSectionLabelsForSummary(meta, section.key),
-        ...getDerivedSectionLabelsForSummary(records, section.key),
+        ...(liveSummaryLabels.length ? liveSummaryLabels : getDerivedSectionLabelsForSummary(records, section.key)),
         ...(section.key === 'misc' ? getKnownFilterLabels(section.type) : [])
       ];
       const canonicalLabels = normalizeLabelList(
