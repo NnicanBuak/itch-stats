@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.1.4
+// @version      6.1.5
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -159,7 +159,6 @@
   let refreshAutostarted = false;
   let transferredPayload = null;
   let summaryReminderShown = false;
-
   let lastLoadedPage = null;
   let lastNumItems = DEFAULT_PAGE_SIZE;
   let dashboardGames = [];
