@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.2.2
+// @version      6.2.3
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -311,6 +311,30 @@
       --tm-accent: #D36D6D;
       --tm-accent-strong: #bc5b5b;
       --tm-accent-soft: rgba(211,109,109,.28);
+    }
+
+    #tm-cloudflare-disable-warning {
+      position: fixed;
+      z-index: 2147483647;
+      left: 50%;
+      top: 32px;
+      width: min(520px, calc(100vw - 32px));
+      transform: translateX(-50%);
+      box-sizing: border-box;
+      padding: 16px 18px;
+      border-radius: 8px;
+      border: 1px solid rgba(211,109,109,.45);
+      background: rgba(28, 24, 24, .96);
+      color: #fff;
+      box-shadow: 0 16px 46px rgba(0,0,0,.36);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+    }
+
+    #tm-cloudflare-disable-warning strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
     }
 
     .tm-rainbow-found {
@@ -3082,6 +3106,41 @@
     );
   }
 
+  function showCloudflareDisableWarning() {
+    document.querySelector('#tm-cloudflare-disable-warning')?.remove();
+
+    const warning = document.createElement('div');
+    warning.id = 'tm-cloudflare-disable-warning';
+    warning.innerHTML = `
+      <strong>Itch Stats отключается для проверки Cloudflare.</strong>
+      Пройдите проверку, затем включите скрипт снова.
+    `;
+    (document.body || document.documentElement).appendChild(warning);
+
+    setTimeout(() => {
+      warning.remove();
+    }, 2400);
+  }
+
+  function stopForCloudflareChallenge(status = null) {
+    if (!isCloudflareChallengePage()) return false;
+
+    searching = false;
+    pausedByHiddenTab = false;
+    abortRefreshFlow('cloudflare challenge detected');
+    showCloudflareDisableWarning();
+
+    const button = document.querySelector('#tm-itch-search');
+    if (button) button.textContent = 'Найти и листать';
+    if (status) {
+      status.textContent =
+        'Скрипт отключается для проверки Cloudflare.\n' +
+        'Пройдите проверку, затем включите скрипт снова.';
+    }
+
+    return true;
+  }
+
   function isSearchPageReady() {
     if (!isGamesPage) return true;
     if (document.readyState !== 'complete') return false;
@@ -4101,7 +4160,7 @@
 
     while (Date.now() - startedAt < timeoutMs) {
       if (!searching) return false;
-      if (isCloudflareChallengePage()) return true;
+      if (stopForCloudflareChallenge(status)) return false;
 
       const currentPage = Number(lastLoadedPage || 0);
       const currentLoaded = getLoadedGamesCount();
@@ -4133,41 +4192,18 @@
   async function waitForSearchPageReady(status = null, timeoutMs = 90000) {
     if (!isGamesPage || isSearchPageReady()) return true;
 
+    if (stopForCloudflareChallenge(status)) return false;
+
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
+      if (stopForCloudflareChallenge(status)) return false;
+
       if (status) {
-        setSearchStatus(status, isCloudflareChallengePage()
-          ? [
-            'Пауза: нужна проверка браузера.',
-            'Пройди её вручную, поиск продолжится автоматически.'
-          ]
-          : 'Жду полной загрузки списка игр...');
+        setSearchStatus(status, 'Жду полной загрузки списка игр...');
       }
 
       await sleep(500);
       if (isSearchPageReady()) return true;
-    }
-
-    return false;
-  }
-
-  async function waitForCloudflareChallengeToClear(status = null, timeoutMs = 180000) {
-    if (!isCloudflareChallengePage()) return true;
-
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      if (status) {
-        setSearchStatus(status, [
-          'Пауза: нужна проверка браузера.',
-          'Пройди её вручную, поиск продолжится автоматически.'
-        ]);
-      }
-      await sleep(500);
-
-      if (!isCloudflareChallengePage()) {
-        await sleep(1200);
-        return true;
-      }
     }
 
     return false;
@@ -4305,7 +4341,9 @@
     if (!pageReady) {
       searching = false;
       button.textContent = 'Найти и листать';
-      status.textContent = 'Поиск остановлен: список игр не загрузился полностью.';
+      if (!isCloudflareChallengePage()) {
+        status.textContent = 'Поиск остановлен: список игр не загрузился полностью.';
+      }
       return;
     }
 
@@ -4322,25 +4360,8 @@
 
     while (searching) {
       if (isCloudflareChallengePage()) {
-        const challengeCleared = await waitForCloudflareChallengeToClear(status);
-
-        if (!challengeCleared) {
-          searching = false;
-          button.textContent = 'Найти и листать';
-          status.textContent = 'Поиск остановлен: страница слишком долго не отвечает.';
-          return;
-        }
-
-        const pageReadyAfterChallenge = await waitForSearchPageReady(status);
-        if (!pageReadyAfterChallenge) {
-          searching = false;
-          button.textContent = 'Найти и листать';
-          status.textContent = 'Поиск остановлен: список игр не загрузился.';
-          return;
-        }
-
-        updateStatusScrolling();
-        continue;
+        stopForCloudflareChallenge(status);
+        return;
       }
 
       if (document.hidden) {
@@ -4439,7 +4460,7 @@
       }
 
       if (!searching) break;
-      if (isCloudflareChallengePage()) continue;
+      if (stopForCloudflareChallenge(status)) return;
 
       passiveScanOwnGames();
       updateStatusScrolling();
@@ -7182,7 +7203,7 @@
         return `
           <tr data-summary-row-section="${escapeHtml(row.section || options.sectionKey || '')}" data-summary-row-label="${escapeHtml(normalize(row.label))}">
             ${selectCell}
-            <td><div class="tm-stat-name-cell"><span>${escapeHtml(row.label)}</span></div></td>
+            <td><div class="tm-stat-name-cell"><span>${escapeHtml(row.displayLabel || row.label)}</span></div></td>
             ${buildSeriesValueCells(row, options.activeSeriesKey)}
             ${actionCell}
           </tr>
@@ -7221,24 +7242,9 @@
       const emptySeriesNote = visibleSeries.length
         ? ''
         : `<div class="tm-stat-muted">Включите хотя бы один раздел выше, чтобы видеть аналитику и запускать обновление.</div>`;
-
-      return `
-        <section class="tm-stat-section" data-summary-section="${escapeHtml(key)}">
-          <div class="tm-stat-section-title">
-            <div class="tm-stat-section-title-main">
-              <input
-                class="tm-stat-section-enable"
-                type="checkbox"
-                data-section-enable="${escapeHtml(key)}"
-                ${enabled ? 'checked' : ''}
-              >
-              <div class="tm-stat-section-title-copy">
-                <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
-                ${buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
-              </div>
-            </div>
-          </div>
-          <div class="tm-stat-section-body ${enabled ? '' : 'tm-disabled'}">
+      const bodyHtml = enabled
+        ? `
+          <div class="tm-stat-section-body">
             <div class="tm-stat-table-wrap">
               <table class="tm-stat-table">
                 <thead>
@@ -7263,11 +7269,33 @@
               ${chartHtml}
             </div>
           </div>
+        `
+        : '';
+
+      return `
+        <section class="tm-stat-section" data-summary-section="${escapeHtml(key)}">
+          <div class="tm-stat-section-title">
+            <div class="tm-stat-section-title-main">
+              <input
+                class="tm-stat-section-enable"
+                type="checkbox"
+                data-section-enable="${escapeHtml(key)}"
+                ${enabled ? 'checked' : ''}
+              >
+              <div class="tm-stat-section-title-copy">
+                <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
+                ${buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
+              </div>
+            </div>
+          </div>
+          ${bodyHtml}
         </section>
       `;
     }
 
-    const defaultRows = [buildRow('Top', 'default')];
+    const defaultRows = [buildRow('Top', 'default', {
+      displayLabel: getSeriesLabel(getSectionSeriesMode('default')) || 'Top'
+    })];
     const sectionRowsByKey = filterSections.reduce((acc, section) => {
       acc[section.key] = buildRows(sectionsData?.[section.key]?.labels || [], section.key);
       return acc;
@@ -7940,6 +7968,9 @@
   }
 
   transferredPayload = consumeTransferredMeta();
+
+  if (stopForCloudflareChallenge()) return;
+
   installAjaxObserver();
 
   if (isDashboardPage) {
