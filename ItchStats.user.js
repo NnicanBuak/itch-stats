@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.2.1
+// @version      6.2.2
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -232,7 +232,8 @@
     const enabled = normalizedKey !== 'misc';
     return {
       enabled,
-      collapsed: !enabled
+      collapsed: !enabled,
+      chartCollapsed: !enabled
     };
   }
 
@@ -242,7 +243,8 @@
     if (typeof value === 'boolean') {
       return {
         enabled: defaults.enabled,
-        collapsed: value,
+        collapsed: false,
+        chartCollapsed: value,
         touched: true
       };
     }
@@ -256,7 +258,10 @@
 
     return {
       enabled: typeof value.enabled === 'boolean' ? value.enabled : defaults.enabled,
-      collapsed: typeof value.collapsed === 'boolean' ? value.collapsed : defaults.collapsed,
+      collapsed: false,
+      chartCollapsed: typeof value.chartCollapsed === 'boolean'
+        ? value.chartCollapsed
+        : (typeof value.collapsed === 'boolean' ? value.collapsed : defaults.chartCollapsed),
       touched: value.touched === true
     };
   }
@@ -1282,6 +1287,10 @@
       position: relative;
     }
 
+    .tm-stat-chart.tm-collapsed {
+      padding-bottom: 10px;
+    }
+
     .tm-stat-chart-head {
       display: flex;
       flex-direction: column;
@@ -1298,11 +1307,23 @@
       flex-wrap: wrap;
     }
 
+    .tm-stat-chart-head-left {
+      min-width: 0;
+    }
+
     .tm-stat-chart-head-top {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 8px;
+    }
+
+    .tm-stat-chart-header-label {
+      color: rgba(255,255,255,.82);
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: .02em;
     }
 
     .tm-stat-chart-title {
@@ -1317,6 +1338,53 @@
       display: inline-flex;
       gap: 6px;
       flex-wrap: wrap;
+    }
+
+    .tm-stat-chart-collapse {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      color: rgba(255,255,255,.82);
+      cursor: pointer;
+      padding: 0;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1;
+      transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
+    }
+
+    .tm-stat-chart-collapse:hover {
+      background: rgba(255,255,255,.1);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
+    .tm-stat-chart-content {
+      overflow: hidden;
+      opacity: 1;
+      max-height: 2000px;
+      transition: max-height .28s ease, opacity .22s ease, margin-top .28s ease;
+      will-change: max-height, opacity;
+    }
+
+    .tm-stat-chart.tm-collapsed .tm-stat-chart-content {
+      opacity: 0;
+      max-height: 0;
+      margin-top: -4px;
+      pointer-events: none;
+    }
+
+    .tm-stat-chart.tm-collapsed .tm-stat-chart-head {
+      margin-bottom: 0;
+    }
+
+    .tm-stat-chart.tm-collapsed .tm-stat-chart-head-right {
+      display: none;
     }
 
     .tm-stat-chart-copy-button {
@@ -5155,23 +5223,43 @@
 
   function getQueueItemRecords(records, item) {
     const seriesRecords = records.filter(record => getRecordSeries(record) === item.series);
+    const wantedLabel = normalize(item.label);
+    const wantedId = normalize(item.id);
 
     if (item.section === 'default') {
-      return seriesRecords.filter(record => isDefaultSummaryRecord(record));
+      return seriesRecords.filter(record => {
+        const focus = buildSummaryFocusTarget(record);
+        return focus?.section === 'default';
+      });
     }
 
     if (item.section === 'intersections') {
-      const wanted = normalize(item.label);
-      const wantedId = normalize(item.id);
       return seriesRecords.filter(record => {
+        const focus = buildSummaryFocusTarget(record);
+        if (focus?.section !== 'intersections') return false;
         const recordIntersectionId = normalize(record?.meta?.intersectionId);
         if (wantedId && recordIntersectionId === wantedId) return true;
-        return normalize(record?.meta?.summaryLabel) === wanted;
+        return normalize(record?.meta?.summaryLabel) === wantedLabel;
       });
     }
 
     return seriesRecords.filter(record => {
-      return getRecordSectionLabels(record, item.section).some(label => normalize(label) === normalize(item.label));
+      const focus = buildSummaryFocusTarget(record);
+      if (focus?.section === item.section && normalize(focus.label) === wantedLabel) {
+        return true;
+      }
+
+      // Keep legacy records without summary labels working, but only when they
+      // belong to a single summary section. This prevents intersections like
+      // "/games/free/platform-web/tag-horror" from leaking into "Price > Free".
+      if (normalize(record?.meta?.summaryLabel)) return false;
+
+      const matchingSections = getFilterSectionConfigs().filter(section => {
+        return getRecordSectionLabels(record, section.key).length > 0;
+      });
+      if (matchingSections.length !== 1 || matchingSections[0]?.key !== item.section) return false;
+
+      return getRecordSectionLabels(record, item.section).some(label => normalize(label) === wantedLabel);
     });
   }
 
@@ -5818,12 +5906,22 @@
     };
   }
 
-  function renderSectionChartSkeleton(chartKey, seriesKeys = ANALYTICS_SERIES.map(item => item.key)) {
+  function renderSectionChartSkeleton(chartKey, seriesKeys = ANALYTICS_SERIES.map(item => item.key), collapsed = false) {
     return `
-      <div class="tm-stat-chart" data-chart-root="${escapeHtml(chartKey)}">
+      <div class="tm-stat-chart ${collapsed ? 'tm-collapsed' : ''}" data-chart-root="${escapeHtml(chartKey)}">
         <div class="tm-stat-chart-head">
           <div class="tm-stat-chart-head-top">
-            <div class="tm-stat-chart-head-left"></div>
+            <div class="tm-stat-chart-head-left">
+              <button
+                class="tm-stat-chart-collapse"
+                type="button"
+                data-chart-collapse
+                title="${collapsed ? 'Развернуть график' : 'Свернуть график'}"
+                aria-label="${collapsed ? 'Развернуть график' : 'Свернуть график'}"
+                aria-expanded="${collapsed ? 'false' : 'true'}"
+              >${collapsed ? '+' : '-'}</button>
+              <span class="tm-stat-chart-header-label">Graph</span>
+            </div>
             <div class="tm-stat-chart-head-right">
               <button class="tm-stat-chart-copy-button" type="button" data-chart-copy title="Copy chart image" aria-label="Copy chart image">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -5837,9 +5935,11 @@
               </div>
             </div>
           </div>
-          <h1 class="tm-stat-chart-title"></h1>
         </div>
-        <div class="tm-stat-chart-body"></div>
+        <div class="tm-stat-chart-content">
+          <h1 class="tm-stat-chart-title"></h1>
+          <div class="tm-stat-chart-body"></div>
+        </div>
         <div class="tm-stat-chart-tooltip"></div>
       </div>
     `;
@@ -7111,20 +7211,20 @@
     function sectionHtml(key, title, rows, options = {}) {
       const sectionUiState = getSummarySectionStateEntry(sectionState, key);
       const autoCollapsed = rows.length < 4;
-      const collapsed = sectionUiState.touched
-        ? !!sectionUiState.collapsed
-        : autoCollapsed || !!sectionUiState.collapsed;
+      const chartCollapsed = sectionUiState.touched
+        ? !!sectionUiState.chartCollapsed
+        : autoCollapsed || !!sectionUiState.chartCollapsed;
       const enabled = !!sectionUiState.enabled;
       const activeSeriesKey = getSectionSeriesMode(key);
       const sortedRows = sortRowsForSeries(rows, activeSeriesKey);
-      const chartHtml = renderSectionChartSkeleton(options.chartKey || key, visibleSeries);
+      const chartHtml = renderSectionChartSkeleton(options.chartKey || key, visibleSeries, chartCollapsed);
       const emptySeriesNote = visibleSeries.length
         ? ''
         : `<div class="tm-stat-muted">Включите хотя бы один раздел выше, чтобы видеть аналитику и запускать обновление.</div>`;
 
       return `
         <section class="tm-stat-section" data-summary-section="${escapeHtml(key)}">
-          <div class="tm-stat-section-title" data-section-toggle="${escapeHtml(key)}">
+          <div class="tm-stat-section-title">
             <div class="tm-stat-section-title-main">
               <input
                 class="tm-stat-section-enable"
@@ -7137,9 +7237,8 @@
                 ${buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
               </div>
             </div>
-            <span class="tm-stat-section-toggle">${collapsed ? '+' : '-'}</span>
           </div>
-          <div class="tm-stat-section-body ${collapsed ? 'tm-hidden' : ''} ${enabled ? '' : 'tm-disabled'}">
+          <div class="tm-stat-section-body ${enabled ? '' : 'tm-disabled'}">
             <div class="tm-stat-table-wrap">
               <table class="tm-stat-table">
                 <thead>
@@ -7160,7 +7259,7 @@
               </table>
             </div>
             ${emptySeriesNote}
-            <div class="tm-stat-chart-shell ${collapsed ? 'tm-hidden' : ''}">
+            <div class="tm-stat-chart-shell">
               ${chartHtml}
             </div>
           </div>
@@ -7376,21 +7475,31 @@
       });
     });
 
-    function setSectionCollapsed(body, collapsed) {
-      if (!body) return;
+    function setChartCollapsed(root, collapsed) {
+      if (!root) return;
+
+      const content = root.querySelector('.tm-stat-chart-content');
+      const button = root.querySelector('[data-chart-collapse]');
+      if (!content) return;
 
       if (collapsed) {
-        body.style.maxHeight = `${body.scrollHeight}px`;
-        body.offsetHeight;
-        body.classList.add('tm-hidden');
-        body.style.maxHeight = '0px';
-        return;
+        content.style.maxHeight = `${content.scrollHeight}px`;
+        content.offsetHeight;
+        root.classList.add('tm-collapsed');
+        content.style.maxHeight = '0px';
+      } else {
+        root.classList.remove('tm-collapsed');
+        content.style.maxHeight = '0px';
+        content.offsetHeight;
+        content.style.maxHeight = `${content.scrollHeight}px`;
       }
 
-      body.classList.remove('tm-hidden');
-      body.style.maxHeight = '0px';
-      body.offsetHeight;
-      body.style.maxHeight = `${body.scrollHeight}px`;
+      if (button) {
+        button.textContent = collapsed ? '+' : '-';
+        button.title = collapsed ? 'Развернуть график' : 'Свернуть график';
+        button.setAttribute('aria-label', collapsed ? 'Развернуть график' : 'Свернуть график');
+        button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      }
     }
 
     function scrollSummaryWidgetIntoView() {
@@ -7419,23 +7528,6 @@
           createSummaryStatsWidget();
           return;
         }
-      }
-
-      const section = widget.querySelector(`[data-summary-section="${CSS.escape(sectionKey)}"]`);
-      const sectionBody = section?.querySelector('.tm-stat-section-body');
-      const sectionToggle = section?.querySelector('[data-section-toggle]');
-      const sectionIcon = sectionToggle?.querySelector('.tm-stat-section-toggle');
-
-      if (sectionBody?.classList.contains('tm-hidden')) {
-        const state = loadSummarySectionState();
-        const current = getSummarySectionStateEntry(state, sectionKey);
-        state[sectionKey] = {
-          ...current,
-          collapsed: false
-        };
-        saveSummarySectionState(state);
-        setSectionCollapsed(sectionBody, false);
-        if (sectionIcon) sectionIcon.textContent = '-';
       }
 
       const rowSelector = `[data-summary-row-section="${CSS.escape(sectionKey)}"][data-summary-row-label="${CSS.escape(labelKey)}"]`;
@@ -7468,38 +7560,39 @@
       }, 420);
     }
 
-    widget.querySelectorAll('.tm-stat-chart-shell').forEach(body => {
-      body.style.maxHeight = body.classList.contains('tm-hidden')
+    widget.querySelectorAll('.tm-stat-chart-content').forEach(content => {
+      const root = content.closest('.tm-stat-chart');
+      content.style.maxHeight = root?.classList.contains('tm-collapsed')
         ? '0px'
-        : `${body.scrollHeight}px`;
+        : `${content.scrollHeight}px`;
 
-      body.addEventListener('transitionend', event => {
+      content.addEventListener('transitionend', event => {
         if (event.propertyName !== 'max-height') return;
-        body.style.maxHeight = body.classList.contains('tm-hidden')
+        content.style.maxHeight = root?.classList.contains('tm-collapsed')
           ? '0px'
           : 'none';
       });
     });
 
-    widget.querySelectorAll('[data-section-toggle]').forEach(toggle => {
-      toggle.addEventListener('click', () => {
-        const key = toggle.getAttribute('data-section-toggle');
-        const body = toggle.nextElementSibling?.querySelector?.('.tm-stat-chart-shell');
-        const icon = toggle.querySelector('.tm-stat-section-toggle');
+    widget.querySelectorAll('[data-chart-collapse]').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        const root = button.closest('[data-chart-root]');
+        const key = root?.getAttribute('data-chart-root');
+        if (!key || !root) return;
+
         const state = loadSummarySectionState();
         const current = getSummarySectionStateEntry(state, key);
-        const isCollapsed = body ? body.classList.contains('tm-hidden') : !!current.collapsed;
+        const isCollapsed = root.classList.contains('tm-collapsed');
         const nextCollapsed = !isCollapsed;
 
         state[key] = {
           ...current,
-          collapsed: nextCollapsed,
+          chartCollapsed: nextCollapsed,
           touched: true
         };
         saveSummarySectionState(state);
-
-        if (body) setSectionCollapsed(body, nextCollapsed);
-        if (icon) icon.textContent = nextCollapsed ? '+' : '-';
+        setChartCollapsed(root, nextCollapsed);
       });
     });
 
