@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.2
+// @version      6.3.3
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -4164,25 +4164,21 @@
       });
   }
 
-  function getBestGlobalPositionForGame(game) {
+  function getLatestTopPopularPositionForGame(game) {
     const records = getStoredRecordsForGame(game)
       .filter(record => {
         const rank = Number(record?.globalPosition);
-        return Number.isFinite(rank) && rank > 0 && rank < Number.MAX_SAFE_INTEGER;
+        if (!Number.isFinite(rank) || rank <= 0 || rank >= Number.MAX_SAFE_INTEGER) return false;
+
+        const focus = buildSummaryFocusTarget(record);
+        return focus?.section === 'default' && focus?.series === 'popular';
       });
 
     if (!records.length) return null;
 
-    return records.reduce((best, record) => {
-      if (!best) return record;
-      const bestRank = Number(best.globalPosition || Number.MAX_SAFE_INTEGER);
-      const currentRank = Number(record.globalPosition || Number.MAX_SAFE_INTEGER);
-
-      if (currentRank !== bestRank) {
-        return currentRank < bestRank ? record : best;
-      }
-
-      return Number(record.foundAt || 0) >= Number(best.foundAt || 0) ? record : best;
+    return records.reduce((latest, record) => {
+      if (!latest) return record;
+      return Number(record.foundAt || 0) >= Number(latest.foundAt || 0) ? record : latest;
     }, null);
   }
 
@@ -4201,8 +4197,8 @@
     previousBadge?.remove();
     previousAnchor?.classList.remove('tm-dashboard-rank-anchor');
 
-    const bestRecord = getBestGlobalPositionForGame(game);
-    if (!bestRecord) return;
+    const latestRecord = getLatestTopPopularPositionForGame(game);
+    if (!latestRecord) return;
 
     const anchor = findDashboardTitleAnchor(row);
     if (!anchor) return;
@@ -4211,8 +4207,8 @@
 
     const badge = document.createElement('div');
     badge.className = 'tm-dashboard-rank-badge';
-    badge.textContent = `#${bestRecord.globalPosition}`;
-    badge.title = `Лучший общий рейтинг: #${bestRecord.globalPosition}`;
+    badge.textContent = `#${latestRecord.globalPosition}`;
+    badge.title = `Последняя позиция Top popular: #${latestRecord.globalPosition}`;
     anchor.appendChild(badge);
   }
 
