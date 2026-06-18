@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.0
+// @version      6.3.1
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1840,47 +1840,128 @@
     }));
   }
 
-  function loadPositions() {
-    const raw = localStorage.getItem(STORAGE_KEY_POSITIONS);
-    const parsed = safeJsonParse(raw, {});
+  function repairStoredRecordMeta(record) {
+    if (!record || typeof record !== 'object') return false;
 
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    let mutated = false;
+    const foundAt = Number(record.foundAt || 0);
+    if (Number.isFinite(foundAt) && foundAt > 0) {
+      if (!record.localDayKey) {
+        record.localDayKey = getLocalDayKey(foundAt);
+        mutated = true;
+      }
+
+      if (!record.localHourKey) {
+        record.localHourKey = getLocalHourKey(foundAt);
+        mutated = true;
+      }
+    }
+
+    if (!record.meta || typeof record.meta !== 'object' || Array.isArray(record.meta)) {
+      record.meta = {
+        category: getSearchCategoryFromPath(record?.path || ''),
+        sections: getEmptyMetaSections(),
+        tags: [],
+        genres: [],
+        platforms: [],
+        intersectionId: '',
+        summaryLabel: ''
+      };
+      mutated = true;
+    }
+
+    if (!record.meta.sections || typeof record.meta.sections !== 'object' || Array.isArray(record.meta.sections)) {
+      record.meta.sections = getEmptyMetaSections();
+      mutated = true;
+    }
+
+    const searchInfo = parseSearchInfoFromHref(record.url || record.path || '');
+    const parts = normalizeIntersectionParts(
+      searchInfo.segments
+        .map(buildIntersectionPartFromSearchSegment)
+        .filter(Boolean)
+    );
+
+    if (!parts.length) return mutated;
+
+    const currentSummaryLabel = String(record.meta.summaryLabel || '').trim();
+    const currentIntersectionId = String(record.meta.intersectionId || '').trim();
+
+    if (!currentSummaryLabel) {
+      record.meta.summaryLabel = parts.map(part => part.label).join(' + ');
+      mutated = true;
+    }
+
+    if (parts.length >= 2 && !currentIntersectionId) {
+      record.meta.intersectionId = buildIntersectionId(parts);
+      mutated = true;
+    }
+
+    parts.forEach(part => {
+      const sectionKey = getFilterSectionKeyByType(part.type);
+      if (!sectionKey || !record.meta.sections?.[sectionKey]) return;
+
+      const normalizedLabel = normalizeSectionLabel(sectionKey, part.label);
+      const labels = Array.isArray(record.meta.sections[sectionKey].labels)
+        ? record.meta.sections[sectionKey].labels
+        : (record.meta.sections[sectionKey].labels = []);
+      if (normalizedLabel && !labels.some(label => normalize(label) === normalize(normalizedLabel))) {
+        labels.push(normalizedLabel);
+        mutated = true;
+      }
+
+      const links = Array.isArray(record.meta.sections[sectionKey].links)
+        ? record.meta.sections[sectionKey].links
+        : (record.meta.sections[sectionKey].links = []);
+      if (part.href && !links.some(link => normalize(link?.label) === normalize(part.label) && String(link?.href || '').trim() === part.href)) {
+        links.push({
+          label: part.label,
+          href: part.href
+        });
+        mutated = true;
+      }
+    });
+
+    record.meta.tags = getRecordSectionLabels(record, 'tags');
+    record.meta.genres = getRecordSectionLabels(record, 'genres');
+    record.meta.platforms = getRecordSectionLabels(record, 'platforms');
+
+    return mutated;
+  }
+
+  function normalizeStoredPositionsData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
       return {};
     }
 
     let mutated = false;
-    Object.values(parsed).forEach(entry => {
+    Object.values(data).forEach(entry => {
       if (!entry || typeof entry !== 'object' || !Array.isArray(entry.records)) return;
 
       entry.records.forEach(record => {
-        if (!record || typeof record !== 'object') return;
-
-        const foundAt = Number(record.foundAt || 0);
-        if (!Number.isFinite(foundAt) || foundAt <= 0) return;
-
-        if (!record.localDayKey) {
-          record.localDayKey = getLocalDayKey(foundAt);
-          mutated = true;
-        }
-
-        if (!record.localHourKey) {
-          record.localHourKey = getLocalHourKey(foundAt);
+        if (repairStoredRecordMeta(record)) {
           mutated = true;
         }
       });
     });
 
-    if (mutated) savePositions(parsed);
+    return {
+      data,
+      mutated
+    };
+  }
 
-    return parsed;
+  function loadPositions() {
+    const raw = localStorage.getItem(STORAGE_KEY_POSITIONS);
+    const parsed = safeJsonParse(raw, {});
+    const normalized = normalizeStoredPositionsData(parsed);
+    if (normalized.mutated) savePositions(normalized.data);
+    return normalized.data;
   }
 
   function savePositions(data) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      data = {};
-    }
-
-    localStorage.setItem(STORAGE_KEY_POSITIONS, JSON.stringify(data));
+    const normalized = normalizeStoredPositionsData(data);
+    localStorage.setItem(STORAGE_KEY_POSITIONS, JSON.stringify(normalized.data));
   }
 
   function loadGameMeta() {
