@@ -34,6 +34,22 @@
     { key: 'top-rated', label: 'Top Rated', pathPart: 'top-rated' }
   ];
   const ANALYTICS_SERIES = SEARCH_SERIES.filter(item => item.key !== 'newest');
+  const SPECIAL_SUMMARY_ITEMS = [
+    {
+      key: 'fresh',
+      label: 'Fresh',
+      section: 'special',
+      series: 'newest',
+      url: 'https://itch.io/games/newest/fresh'
+    },
+    {
+      key: 'featured',
+      label: 'Featured',
+      section: 'special',
+      series: 'new-and-popular',
+      url: 'https://itch.io/games/new-and-popular/featured'
+    }
+  ];
   const FILTER_SECTION_DEFINITIONS = [
     { key: 'platforms', type: 'platform', title: 'Платформы', selection: 'single' },
     { key: 'genres', type: 'genre', title: 'Жанры', selection: 'single' },
@@ -227,7 +243,7 @@
   }
 
   function getSummarySectionStorageKeys() {
-    return ['default', ...getFilterSectionConfigs().map(section => section.key), 'intersections'];
+    return ['special', 'default', ...getFilterSectionConfigs().map(section => section.key), 'intersections'];
   }
 
   function getDefaultSummarySectionState(key) {
@@ -281,6 +297,15 @@
       };
       return acc;
     }, {});
+  }
+
+  function getSpecialSummaryItem(value) {
+    const absolute = toAbsoluteItchUrl(value);
+    if (!absolute) return null;
+
+    return SPECIAL_SUMMARY_ITEMS.find(item => {
+      return isSameSearchUrl(item.url, absolute);
+    }) || null;
   }
 
   function getPriceBaseSelectionLabels() {
@@ -1869,7 +1894,8 @@
         genres: [],
         platforms: [],
         intersectionId: '',
-        summaryLabel: ''
+        summaryLabel: '',
+        summarySection: ''
       };
       mutated = true;
     }
@@ -1880,11 +1906,23 @@
     }
 
     const searchInfo = parseSearchInfoFromHref(record.url || record.path || '');
+    const specialSummaryItem = getSpecialSummaryItem(record.url || record.path || '');
     const parts = normalizeIntersectionParts(
       searchInfo.segments
         .map(buildIntersectionPartFromSearchSegment)
         .filter(Boolean)
     );
+
+    if (specialSummaryItem) {
+      if (String(record.meta.summarySection || '').trim() !== specialSummaryItem.section) {
+        record.meta.summarySection = specialSummaryItem.section;
+        mutated = true;
+      }
+      if (String(record.meta.summaryLabel || '').trim() !== specialSummaryItem.label) {
+        record.meta.summaryLabel = specialSummaryItem.label;
+        mutated = true;
+      }
+    }
 
     if (!parts.length) return mutated;
 
@@ -3323,6 +3361,7 @@
       acc[section.key] = section.title;
       return acc;
     }, {
+      special: 'Отдельные разделы',
       default: 'Общее',
       intersections: 'Пересечение'
     });
@@ -3402,6 +3441,7 @@
     const parts = location.pathname.split('/').filter(Boolean);
     const params = new URLSearchParams(location.search);
     const refreshState = loadRefreshState();
+    const specialSummaryItem = getSpecialSummaryItem(location.href);
     const queueItem = refreshState && refreshState.phase === 'search'
       ? (Array.isArray(refreshState.queue) ? refreshState.queue[Number(refreshState.index || 0)] : null)
       : null;
@@ -3539,7 +3579,12 @@
       intersectionId: queueItemMatchesPage && queueItem?.section === 'intersections'
         ? String(queueItem.id || '')
         : '',
-      summaryLabel: queueItemMatchesPage ? queueItem.label : ''
+      summaryLabel: queueItemMatchesPage
+        ? String(queueItem.label || '')
+        : (specialSummaryItem?.label || ''),
+      summarySection: queueItemMatchesPage
+        ? String(queueItem.section || '')
+        : (specialSummaryItem?.section || '')
     };
   }
 
@@ -3853,10 +3898,28 @@
     const meta = record.meta && typeof record.meta === 'object' ? record.meta : {};
     const series = getRecordSeries(record) || getSearchSeriesFromPath(record.path || '') || 'popular';
     const summaryLabel = String(meta.summaryLabel || '').trim();
+    const summarySection = String(meta.summarySection || '').trim();
+    const specialSummaryItem = getSpecialSummaryItem(record.url || record.path || '');
     const sectionLabels = getFilterSectionConfigs().reduce((acc, section) => {
       acc[section.key] = getRecordSectionLabels(record, section.key);
       return acc;
     }, {});
+
+    if (summarySection === 'special' && summaryLabel) {
+      return {
+        section: 'special',
+        label: summaryLabel,
+        series
+      };
+    }
+
+    if (specialSummaryItem) {
+      return {
+        section: specialSummaryItem.section,
+        label: specialSummaryItem.label,
+        series: specialSummaryItem.series
+      };
+    }
 
     if (isDefaultSummaryRecord(record)) {
       return {
@@ -5554,6 +5617,13 @@
     const wantedLabel = normalize(item.label);
     const wantedId = normalize(item.id);
 
+    if (item.section === 'special') {
+      return seriesRecords.filter(record => {
+        const focus = buildSummaryFocusTarget(record);
+        return focus?.section === 'special' && normalize(focus.label) === wantedLabel;
+      });
+    }
+
     if (item.section === 'default') {
       return seriesRecords.filter(record => {
         const focus = buildSummaryFocusTarget(record);
@@ -6983,6 +7053,8 @@
         return acc;
       }, {});
 
+      if (item.section === 'special' && hasRecords) return -10;
+      if (item.section === 'special') return -20;
       if (item.section === 'default' && hasRecords) return 100;
       if (item.section === 'default') return 10;
       if (item.section === 'intersections') return 0;
@@ -7106,6 +7178,14 @@
     const data = getSummaryData(game);
     const enabledSeries = getEnabledSummarySeries();
     const sectionState = loadSummarySectionState();
+    const specialRefreshItems = getSummarySectionStateEntry(sectionState, 'special').enabled
+      ? SPECIAL_SUMMARY_ITEMS.map(item => ({
+        section: item.section,
+        label: item.label,
+        series: item.series,
+        url: item.url
+      }))
+      : [];
     const sectionRefreshItems = getFilterSectionConfigs().flatMap(section => {
       if (!getSummarySectionStateEntry(sectionState, section.key).enabled) return [];
       const links = Array.isArray(data.sectionsData?.[section.key]?.links) ? data.sectionsData[section.key].links : [];
@@ -7117,6 +7197,7 @@
       })));
     });
     const items = dedupeRefreshItems([
+      ...specialRefreshItems,
       ...(getSummarySectionStateEntry(sectionState, 'default').enabled ? enabledSeries.map(series => ({
         section: 'default',
         label: 'Default',
@@ -7504,6 +7585,28 @@
       };
     }
 
+    function buildFixedSeriesRow(label, section, seriesKey, href, extra = {}) {
+      const matchingRecords = getQueueItemRecords(records, {
+        section,
+        label,
+        series: seriesKey
+      });
+
+      return {
+        label,
+        section,
+        activeSeriesKey: seriesKey,
+        seriesStats: {
+          [seriesKey]: {
+            href,
+            current: getLatestRecord(matchingRecords),
+            best: getBestRecord(matchingRecords)
+          }
+        },
+        ...extra
+      };
+    }
+
     function buildRows(labels, section = '') {
       return labels.map(label => buildRow(label, section));
     }
@@ -7525,17 +7628,20 @@
     }
 
     function buildSeriesValueCells(row, activeSeriesKey = '') {
-      const stats = row.seriesStats?.[activeSeriesKey] || {};
+      const resolvedSeriesKey = row.activeSeriesKey || activeSeriesKey;
+      const stats = row.seriesStats?.[resolvedSeriesKey] || {};
       return `
-        <td class="tm-stat-series-cell" data-summary-series-current="${escapeHtml(activeSeriesKey)}">${renderStatCell(stats.current, { current: true, bestRecord: stats.best, href: stats.href })}</td>
-        <td class="tm-stat-series-cell" data-summary-series-best="${escapeHtml(activeSeriesKey)}">${renderBestStatCell(stats.best)}</td>
+        <td class="tm-stat-series-cell" data-summary-series-current="${escapeHtml(resolvedSeriesKey)}">${renderStatCell(stats.current, { current: true, bestRecord: stats.best, href: stats.href })}</td>
+        <td class="tm-stat-series-cell" data-summary-series-best="${escapeHtml(resolvedSeriesKey)}">${renderBestStatCell(stats.best)}</td>
       `;
     }
 
-    function sortRowsForSeries(rows, activeSeriesKey = '') {
+    function sortRowsForSeries(rows, activeSeriesKey = '', useRowSeries = false) {
       return [...rows].sort((left, right) => {
-        const leftRank = Number(left?.seriesStats?.[activeSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
-        const rightRank = Number(right?.seriesStats?.[activeSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
+        const leftSeriesKey = useRowSeries ? (left?.activeSeriesKey || activeSeriesKey) : activeSeriesKey;
+        const rightSeriesKey = useRowSeries ? (right?.activeSeriesKey || activeSeriesKey) : activeSeriesKey;
+        const leftRank = Number(left?.seriesStats?.[leftSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
+        const rightRank = Number(right?.seriesStats?.[rightSeriesKey]?.current?.globalPosition || Number.POSITIVE_INFINITY);
         if (leftRank !== rightRank) return leftRank - rightRank;
         return normalize(left?.label).localeCompare(normalize(right?.label));
       });
@@ -7612,9 +7718,9 @@
         : autoCollapsed || !!sectionUiState.chartCollapsed;
       const enabled = !!sectionUiState.enabled;
       const activeSeriesKey = getSectionSeriesMode(key);
-      const sortedRows = sortRowsForSeries(rows, activeSeriesKey);
-      const chartHtml = renderSectionChartSkeleton(options.chartKey || key, visibleSeries, chartCollapsed);
-      const emptySeriesNote = visibleSeries.length
+      const sortedRows = sortRowsForSeries(rows, activeSeriesKey, !!options.useRowSeries);
+      const chartHtml = options.hideChart ? '' : renderSectionChartSkeleton(options.chartKey || key, visibleSeries, chartCollapsed);
+      const emptySeriesNote = (visibleSeries.length || options.useRowSeries)
         ? ''
         : `<div class="tm-stat-muted">Включите хотя бы один раздел выше, чтобы видеть аналитику и запускать обновление.</div>`;
       const bodyHtml = enabled
@@ -7640,9 +7746,11 @@
               </table>
             </div>
             ${emptySeriesNote}
-            <div class="tm-stat-chart-shell">
-              ${chartHtml}
-            </div>
+            ${options.hideChart ? '' : `
+              <div class="tm-stat-chart-shell">
+                ${chartHtml}
+              </div>
+            `}
           </div>
         `
         : '';
@@ -7659,7 +7767,7 @@
               >
               <div class="tm-stat-section-title-copy">
                 <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
-                ${buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
+                ${options.showSeriesSelector === false ? '' : buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
               </div>
             </div>
           </div>
@@ -7668,6 +7776,12 @@
       `;
     }
 
+    const specialRows = SPECIAL_SUMMARY_ITEMS.map(item => buildFixedSeriesRow(
+      item.label,
+      item.section,
+      item.series,
+      item.url
+    ));
     const defaultRows = [buildRow('Top', 'default', {
       displayLabel: getSeriesLabel(getSectionSeriesMode('default')) || 'Top'
     })];
@@ -7683,6 +7797,7 @@
       acc[section.key] = getSectionToggleChartData(records, section.key, sectionRowsByKey[section.key].map(row => row.label));
       return acc;
     }, {
+      special: getSectionToggleChartData(records, 'special', specialRows.map(row => row.label)),
       default: getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label)),
       intersections: getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
     });
@@ -7786,6 +7901,11 @@
         <div class="tm-summary-shell">
           ${sidePanelHtml}
           <div class="tm-summary-main">
+            ${sectionHtml('special', 'Отдельные разделы', specialRows, {
+              useRowSeries: true,
+              hideChart: true,
+              showSeriesSelector: false
+            })}
             ${sectionHtml('default', 'Общее', defaultRows)}
             ${filterSectionsHtml}
             ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
