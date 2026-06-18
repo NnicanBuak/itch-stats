@@ -3613,6 +3613,29 @@
     return Math.ceil(Math.max(1, getLoadedGamesCount()) / (lastNumItems || DEFAULT_PAGE_SIZE));
   }
 
+  function isSearchListFullyLoaded(page = getEstimatedCurrentPage(), loadedGamesCount = getLoadedGamesCount(), pageSize = lastNumItems || DEFAULT_PAGE_SIZE) {
+    const safePage = Number(page || 0);
+    const safeLoaded = Number(loadedGamesCount || 0);
+    const safePageSize = Number(pageSize || DEFAULT_PAGE_SIZE);
+
+    if (safePage <= 0 || safePageSize <= 0) return false;
+    return safeLoaded < safePage * safePageSize;
+  }
+
+  function isTrueOverflowRecord(record) {
+    if (!record?.limitReached || !record?.displayRank) return false;
+
+    const page = Number(record?.page || 0);
+    const loadedGamesCount = Number(record?.loadedGamesCount || 0);
+    const pageSize = Number(record?.pageSize || DEFAULT_PAGE_SIZE);
+
+    if (page > 0 && pageSize > 0 && isSearchListFullyLoaded(page, loadedGamesCount, pageSize)) {
+      return false;
+    }
+
+    return true;
+  }
+
   function buildRecord(card, game) {
     const safeGame = game || {
       id: null,
@@ -4410,13 +4433,19 @@
           id: null,
           name: targetText || 'Unknown game'
         };
+        const loadedGamesCount = getLoadedGamesCount();
+        const listFullyLoaded = isSearchListFullyLoaded(currentPage, loadedGamesCount);
 
-        saveLimitReachedPosition(safeTargetGame);
         searching = false;
         button.textContent = 'Найти и листать';
         status.textContent =
-          `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n` +
-          `Пролистано игр: ${getLoadedGamesCount()}`;
+          (listFullyLoaded
+            ? 'Не найдено: список загружен полностью.\n'
+            : `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n`) +
+          `Пролистано игр: ${loadedGamesCount}`;
+        if (!listFullyLoaded) {
+          saveLimitReachedPosition(safeTargetGame);
+        }
         if (refreshActive && targetGame) {
           setTimeout(() => {
             advanceRefreshFlow({
@@ -5394,21 +5423,34 @@
     const bestByDay = new Map();
 
     records.forEach(record => {
-      if (!isFiniteRankRecord(record)) return;
-
       const foundAt = Number(record?.foundAt || 0);
       const date = new Date(foundAt);
       if (Number.isNaN(date.getTime())) return;
 
       const dayKey = String(record?.localDayKey || '') || formatChartDayKey(date);
       if (!dayKeySet.has(dayKey)) return;
-
-      const rank = Number(record.globalPosition);
       const previous = bestByDay.get(dayKey);
-      if (!previous || rank < previous.value || (rank === previous.value && foundAt >= previous.foundAt)) {
+
+      if (isFiniteRankRecord(record)) {
+        const rank = Number(record.globalPosition);
+        if (!previous || previous.isOverflow || rank < previous.value || (rank === previous.value && foundAt >= previous.foundAt)) {
+          bestByDay.set(dayKey, {
+            value: rank,
+            foundAt,
+            isOverflow: false
+          });
+        }
+        return;
+      }
+
+      if (!isTrueOverflowRecord(record)) return;
+
+      if (!previous || (previous.isOverflow && foundAt >= previous.foundAt)) {
         bestByDay.set(dayKey, {
-          value: rank,
-          foundAt
+          value: Number(record?.loadedGamesCount || 0) || Number.MAX_SAFE_INTEGER,
+          foundAt,
+          isOverflow: true,
+          displayValue: String(record.displayRank)
         });
       }
     });
@@ -5419,7 +5461,9 @@
         dayKey: day.key,
         dayLabel: day.fullLabel || day.label,
         value: point.value,
-        foundAt: point.foundAt
+        foundAt: point.foundAt,
+        isOverflow: !!point.isOverflow,
+        displayValue: point.displayValue || ''
       } : null;
     });
   }
@@ -5485,14 +5529,51 @@
     };
   }
 
+  function getChartPointNumericValue(point) {
+    const value = Number(point?.plotValue ?? point?.value);
+    return Number.isFinite(value) ? value : NaN;
+  }
+
+  function getChartPointDisplayValue(point) {
+    if (!point) return '--';
+    if (point.displayValue) return String(point.displayValue);
+
+    const value = Number(point.value);
+    return Number.isFinite(value) ? `#${value}` : '--';
+  }
+
+  function resolveChartSeriesPoints(series) {
+    const exactValues = series.flatMap(item => item.points
+      .filter(point => point && !point.isOverflow)
+      .map(point => Number(point.value))
+      .filter(Number.isFinite));
+    const fallbackMax = exactValues.length ? Math.max(...exactValues) : 2;
+
+    return {
+      hasExactValues: exactValues.length > 0,
+      exactValues,
+      series: series.map(item => ({
+        ...item,
+        points: item.points.map(point => {
+          if (!point) return null;
+          return point.isOverflow
+            ? { ...point, plotValue: fallbackMax + 1 }
+            : { ...point, plotValue: Number(point.value) };
+        })
+      }))
+    };
+  }
+
   function getChartCoordinates(points, getX, getY) {
     return points.reduce((acc, point, index) => {
       if (!point) return acc;
+      const numericValue = getChartPointNumericValue(point);
+      if (!Number.isFinite(numericValue)) return acc;
       acc.push({
         index,
-        value: point.value,
+        value: numericValue,
         x: getX(index),
-        y: getY(point.value),
+        y: getY(numericValue),
         point
       });
       return acc;
@@ -5610,7 +5691,7 @@
   }
 
   function buildLinearTrendPath(points, getX, getY, indexRange = {}) {
-    const coords = getChartCoordinates(points, getX, getY);
+    const coords = getChartCoordinates(points.map(point => (point && !point.isOverflow ? point : null)), getX, getY);
     if (coords.length < 2) return '';
 
     let sumX = 0;
@@ -5639,8 +5720,10 @@
 
   function buildMovingAverageTrendPoints(points, windowSize) {
     const validPoints = points.reduce((acc, point, index) => {
-      if (!point) return acc;
-      acc.push({ index, value: point.value });
+      if (!point || point.isOverflow) return acc;
+      const numericValue = getChartPointNumericValue(point);
+      if (!Number.isFinite(numericValue)) return acc;
+      acc.push({ index, value: numericValue });
       return acc;
     }, []);
 
@@ -5715,9 +5798,11 @@
         .join('');
       const circles = item.points.map((point, pointIndex) => {
         if (!point) return '';
-        const title = `${item.label} • ${point.dayLabel} • #${point.value} • ${getSeriesLabel(point.series || 'popular')}`;
+        const numericValue = getChartPointNumericValue(point);
+        if (!Number.isFinite(numericValue)) return '';
+        const title = `${item.label} • ${point.dayLabel} • ${getChartPointDisplayValue(point)} • ${getSeriesLabel(point.series || 'popular')}`;
         return `
-          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" data-chart-series-key="${escapeHtml(seriesKey)}" cx="${getX(pointIndex)}" cy="${getY(point.value)}" r="3.5" fill="${color}">
+          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" data-chart-series-key="${escapeHtml(seriesKey)}" cx="${getX(pointIndex)}" cy="${getY(numericValue)}" r="3.5" fill="${color}">
             <title>${escapeHtml(title)}</title>
           </circle>
         `;
@@ -5742,15 +5827,18 @@
 
   function renderSectionChart(chartData, options = {}) {
     const days = Array.isArray(chartData?.days) ? chartData.days : [];
-    const series = Array.isArray(chartData?.series) ? chartData.series : [];
+    const rawSeries = Array.isArray(chartData?.series) ? chartData.series : [];
     const palette = Array.isArray(options.palette) && options.palette.length
       ? options.palette
       : ['#4A8CFF', '#FFC53D', '#D86BFF', '#FF7F50', '#8A5CFF', '#31D0AA', '#4DD8FF', '#FF5D8F', '#9BE564', '#FFD166'];
     const showLegend = options.showLegend !== false;
 
-    if (!days.length || !series.length) {
+    if (!days.length || !rawSeries.length) {
       return `<div class="tm-stat-muted tm-stat-chart">No data for the last 7 days.</div>`;
     }
+
+    const preparedChart = resolveChartSeriesPoints(rawSeries);
+    const series = preparedChart.series;
 
     const width = 580;
     const height = 180;
@@ -5759,7 +5847,9 @@
     const plotHeight = height - margin.top - margin.bottom;
     const visualPadding = 10;
     const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
-    const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
+    const values = preparedChart.hasExactValues
+      ? preparedChart.exactValues
+      : series.flatMap(item => item.points.map(point => getChartPointNumericValue(point)).filter(Number.isFinite));
     if (!values.length) {
       return `<div class="tm-stat-muted tm-stat-chart">No exact rank data for the last 7 days.</div>`;
     }
@@ -5774,7 +5864,7 @@
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
     const getY = value => {
       const ratio = (value - minValue) / (maxValue - minValue);
-      return margin.top + visualPadding + ratio * innerPlotHeight;
+      return margin.top + visualPadding + Math.max(0, Math.min(1, ratio)) * innerPlotHeight;
     };
 
     const tickValues = [0, 1, 2, 3].map(step => {
@@ -6229,7 +6319,7 @@
     const durationData = chartData?.durations?.[durationDays] || chartData?.durations?.[1] || null;
     const days = Array.isArray(durationData?.days) ? durationData.days : [];
     const allSeries = Array.isArray(durationData?.modes?.[mode]) ? durationData.modes[mode] : [];
-    const series = allSeries.filter(item => !hiddenSeriesSet.has(String(item?.key || '')));
+    let series = allSeries.filter(item => !hiddenSeriesSet.has(String(item?.key || '')));
 
     if (!body) return;
     if (title) title.textContent = `${modeLabel} / ${durationLabel}`;
@@ -6284,7 +6374,11 @@
       const plotHeight = height - margin.top - margin.bottom;
       const visualPadding = 10;
       const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
-      const values = series.flatMap(item => item.points.filter(Boolean).map(point => point.value));
+      const preparedChart = resolveChartSeriesPoints(series);
+      series = preparedChart.series;
+      const values = preparedChart.hasExactValues
+        ? preparedChart.exactValues
+        : series.flatMap(item => item.points.map(point => getChartPointNumericValue(point)).filter(Number.isFinite));
 
       if (!values.length) {
         body.innerHTML = `<div class="tm-stat-muted">No exact rank data for the last ${durationLabel}.</div>`;
@@ -6299,7 +6393,10 @@
     }
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
-    const getY = value => margin.top + visualPadding + ((value - minValue) / (maxValue - minValue)) * innerPlotHeight;
+    const getY = value => {
+      const ratio = (value - minValue) / (maxValue - minValue);
+      return margin.top + visualPadding + Math.max(0, Math.min(1, ratio)) * innerPlotHeight;
+    };
     const tickValues = [0, 1, 2, 3].map(step => Math.round(minValue + (maxValue - minValue) * (step / 3)));
 
     const gridLines = tickValues.map(value => {
@@ -6454,7 +6551,7 @@
           <div class="tm-stat-chart-tooltip-row" data-chart-series-key="${escapeHtml(row.key)}">
             <span class="tm-stat-chart-tooltip-dot" style="background:${row.color}"></span>
             <span class="tm-stat-chart-tooltip-label" title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span>
-            <span class="tm-stat-chart-tooltip-value">${row.point ? `#${row.point.value}` : '--'}</span>
+            <span class="tm-stat-chart-tooltip-value">${getChartPointDisplayValue(row.point)}</span>
           </div>
         `).join('')}
       `;
