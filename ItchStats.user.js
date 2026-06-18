@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.1
+// @version      6.3.2
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -341,7 +341,7 @@
       animation: none !important;
       box-shadow: 0 0 0 2px #fff, 0 0 12px rgba(255,255,255,.65) !important;
       position: relative !important;
-      z-index: 9998 !important;
+      z-index: 2 !important;
       padding: 10px !important;
       border-radius: 12px !important;
       transform-style: preserve-3d !important;
@@ -370,10 +370,11 @@
       will-change: transform !important;
       border-radius: 12px !important;
       position: relative !important;
+      z-index: 1 !important;
     }
 
     .tm-tilt-card:hover {
-      z-index: 9997 !important;
+      z-index: 2 !important;
       filter: brightness(1.08) saturate(1.08);
     }
 
@@ -721,7 +722,7 @@
       left: 50%;
       top: calc(100% + 2rem);
       transform: translateX(-50%);
-      z-index: 10010;
+      z-index: 3;
       box-sizing: border-box;
       clear: both;
       pointer-events: auto;
