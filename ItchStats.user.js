@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.2.3
+// @version      6.3.0
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -674,6 +674,34 @@
 
     .tm-game-item:hover {
       background: #333;
+    }
+
+    .tm-dashboard-rank-anchor {
+      position: relative !important;
+      padding-right: 76px !important;
+      box-sizing: border-box;
+    }
+
+    .tm-dashboard-rank-badge {
+      position: absolute;
+      top: 0;
+      right: 0;
+      height: 100%;
+      min-width: 64px;
+      padding: 0 10px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #2e5665, #182f39);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 18px rgba(0,0,0,.18);
+      color: #fff;
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -.04em;
+      white-space: nowrap;
+      pointer-events: none;
     }
 
     .tm-found-info {
@@ -4052,6 +4080,88 @@
         const recordName = normalize(record?.game?.name);
         return recordName && (recordName === wantedName || recordName.includes(wantedName) || wantedName.includes(recordName));
       });
+  }
+
+  function getBestGlobalPositionForGame(game) {
+    const records = getStoredRecordsForGame(game)
+      .filter(record => {
+        const rank = Number(record?.globalPosition);
+        return Number.isFinite(rank) && rank > 0 && rank < Number.MAX_SAFE_INTEGER;
+      });
+
+    if (!records.length) return null;
+
+    return records.reduce((best, record) => {
+      if (!best) return record;
+      const bestRank = Number(best.globalPosition || Number.MAX_SAFE_INTEGER);
+      const currentRank = Number(record.globalPosition || Number.MAX_SAFE_INTEGER);
+
+      if (currentRank !== bestRank) {
+        return currentRank < bestRank ? record : best;
+      }
+
+      return Number(record.foundAt || 0) >= Number(best.foundAt || 0) ? record : best;
+    }, null);
+  }
+
+  function findDashboardTitleAnchor(row) {
+    return row.querySelector('.game_title')
+      || row.querySelector('.title')
+      || row.querySelector('h2')
+      || row.querySelector('h3');
+  }
+
+  function decorateDashboardRowWithRank(row, game) {
+    if (!row || !game) return;
+
+    const previousBadge = row.querySelector('.tm-dashboard-rank-badge');
+    const previousAnchor = row.querySelector('.tm-dashboard-rank-anchor');
+    previousBadge?.remove();
+    previousAnchor?.classList.remove('tm-dashboard-rank-anchor');
+
+    const bestRecord = getBestGlobalPositionForGame(game);
+    if (!bestRecord) return;
+
+    const anchor = findDashboardTitleAnchor(row);
+    if (!anchor) return;
+
+    anchor.classList.add('tm-dashboard-rank-anchor');
+
+    const badge = document.createElement('div');
+    badge.className = 'tm-dashboard-rank-badge';
+    badge.textContent = `#${bestRecord.globalPosition}`;
+    badge.title = `Лучший общий рейтинг: #${bestRecord.globalPosition}`;
+    anchor.appendChild(badge);
+  }
+
+  function decorateDashboardRowsWithRanks() {
+    if (!isDashboardPage) return;
+
+    loadDashboardGamesFromCache();
+
+    const rows = [...document.querySelectorAll('.game_list .game_row, .game_row')];
+    if (!rows.length || !dashboardGames.length) return;
+
+    for (const row of rows) {
+      const rowText = normalize(row.textContent);
+      if (!rowText.includes('published')) continue;
+
+      const titleNode =
+        row.querySelector('.game_title .game_link')
+        || row.querySelector('.game_title a.game_link')
+        || row.querySelector('a.game_link')
+        || row.querySelector('.game_title a')
+        || row.querySelector('.game_title')
+        || row.querySelector('.title');
+
+      const name = String(titleNode?.textContent || '').trim();
+      if (!name) continue;
+
+      const game = dashboardGames.find(item => normalize(item?.name) === normalize(name));
+      if (!game) continue;
+
+      decorateDashboardRowWithRank(row, game);
+    }
   }
 
   function getBestStoredRecordForCurrentSearch(game) {
@@ -8072,9 +8182,11 @@
 
   if (isDashboardPage) {
     cacheDashboardGamesIfOnDashboard();
+    decorateDashboardRowsWithRanks();
 
     const dashboardObserver = new MutationObserver(() => {
       cacheDashboardGamesIfOnDashboard();
+      decorateDashboardRowsWithRanks();
     });
 
     dashboardObserver.observe(document.body, {
