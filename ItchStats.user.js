@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.3
+// @version      6.3.4
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -25,6 +25,7 @@
   const SCROLL_BURST_PAUSE = 85;
   const DEFAULT_PAGE_SIZE = 36;
   const MAX_SEARCH_PAGE = 30;
+  const SEARCH_PROGRESS_STALE_MS = 18000;
   const SEARCH_SERIES = [
     { key: 'popular', label: 'Popular', pathPart: '' },
     { key: 'new-and-popular', label: 'New & Popular', pathPart: 'new-and-popular' },
@@ -161,6 +162,8 @@
   let summaryReminderShown = false;
   let lastLoadedPage = null;
   let lastNumItems = DEFAULT_PAGE_SIZE;
+  let lastSearchProgressAt = 0;
+  let lastSearchProgressSnapshot = null;
   let dashboardGames = [];
 
   const passiveHighlighted = new WeakSet();
@@ -4088,11 +4091,21 @@
   }
 
   async function waitForScrollToSettle(stableMs = 220, timeoutMs = 2200) {
-    const startedAt = Date.now();
+    let startedAt = Date.now();
     let lastY = window.scrollY;
     let stableSince = Date.now();
 
     while (Date.now() - startedAt < timeoutMs) {
+      if (document.hidden) {
+        pausedByHiddenTab = true;
+        await waitUntilVisible();
+        pausedByHiddenTab = false;
+        startedAt = Date.now();
+        lastY = window.scrollY;
+        stableSince = Date.now();
+        continue;
+      }
+
       await wait(60);
 
       const currentY = window.scrollY;
@@ -4131,7 +4144,7 @@
         tailStep: Math.max(window.innerHeight, SCROLL_STEP),
         extraTailStep: Math.max(SCROLL_STEP, Math.round(window.innerHeight * 0.9)),
         jumpPauseMs: 80,
-        pageAdvanceTimeoutMs: 7000
+        pageAdvanceTimeoutMs: 12000
       }
       : {
         fastScroll: false,
@@ -4363,7 +4376,7 @@
   }
 
   async function waitForSearchResultsAdvance(snapshot, status = null, options = {}) {
-    const startedAt = Date.now();
+    let startedAt = Date.now();
     const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 8000;
     const initialPage = Number(snapshot?.page || 0);
     const initialLoaded = Number(snapshot?.loaded || 0);
@@ -4372,6 +4385,22 @@
     while (Date.now() - startedAt < timeoutMs) {
       if (!searching) return false;
       if (stopForCloudflareChallenge(status)) return false;
+
+      if (document.hidden) {
+        pausedByHiddenTab = true;
+        if (status) {
+          setSearchStatus(status, [
+            'Пауза: вкладка скрыта.',
+            'Догрузка продолжится после возврата.'
+          ]);
+        }
+        await waitUntilVisible();
+        if (!searching) return false;
+        pausedByHiddenTab = false;
+        markSearchProgress();
+        startedAt = Date.now();
+        continue;
+      }
 
       const currentPage = Number(lastLoadedPage || 0);
       const currentLoaded = getLoadedGamesCount();
@@ -4382,9 +4411,16 @@
         currentLoaded > initialLoaded ||
         currentHeight > initialHeight
       ) {
+        markSearchProgress({
+          page: currentPage,
+          loaded: currentLoaded,
+          height: currentHeight
+        });
         await waitForSearchPageReady(status, 12000);
         return true;
       }
+
+      syncSearchProgressSnapshot();
 
       if (status) {
         const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
@@ -4405,9 +4441,25 @@
 
     if (stopForCloudflareChallenge(status)) return false;
 
-    const startedAt = Date.now();
+    let startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if (stopForCloudflareChallenge(status)) return false;
+
+      if (document.hidden) {
+        pausedByHiddenTab = true;
+        if (status) {
+          setSearchStatus(status, [
+            'Пауза: вкладка скрыта.',
+            'Жду возврата на вкладку перед продолжением.'
+          ]);
+        }
+        await waitUntilVisible();
+        if (!searching) return false;
+        pausedByHiddenTab = false;
+        startedAt = Date.now();
+        markSearchProgress();
+        continue;
+      }
 
       if (status) {
         setSearchStatus(status, 'Жду полной загрузки списка игр...');
@@ -4514,6 +4566,35 @@
     ));
   }
 
+  function captureSearchProgressSnapshot() {
+    return {
+      page: Number(lastLoadedPage || 0),
+      loaded: getLoadedGamesCount(),
+      height: document.body?.scrollHeight || 0
+    };
+  }
+
+  function markSearchProgress(snapshot = null) {
+    lastSearchProgressAt = Date.now();
+    lastSearchProgressSnapshot = snapshot || captureSearchProgressSnapshot();
+  }
+
+  function syncSearchProgressSnapshot() {
+    const snapshot = captureSearchProgressSnapshot();
+
+    if (
+      !lastSearchProgressSnapshot ||
+      snapshot.page !== Number(lastSearchProgressSnapshot.page || 0) ||
+      snapshot.loaded !== Number(lastSearchProgressSnapshot.loaded || 0) ||
+      snapshot.height !== Number(lastSearchProgressSnapshot.height || 0)
+    ) {
+      markSearchProgress(snapshot);
+      return true;
+    }
+
+    return false;
+  }
+
   function passiveScanOwnGames() {
     if (!isGamesPage) return;
 
@@ -4544,6 +4625,7 @@
 
     searching = true;
     pausedByHiddenTab = false;
+    markSearchProgress();
 
     button.textContent = 'Остановить';
     updateStatusScrolling();
@@ -4681,18 +4763,21 @@
 
       passiveScanOwnGames();
       updateStatusScrolling();
+      syncSearchProgressSnapshot();
 
       const currentY = window.scrollY;
       const currentHeight = document.body.scrollHeight;
       const currentLoaded = getLoadedGamesCount();
       const currentKnownPage = Number(lastLoadedPage || 0);
+      const progressWentStale = Date.now() - lastSearchProgressAt >= SEARCH_PROGRESS_STALE_MS;
 
       if (
         !changedDuringBurst &&
         currentY === lastScrollY &&
         currentHeight === lastScrollHeight &&
         currentLoaded === lastLoadedCount &&
-        currentKnownPage === lastKnownPage
+        currentKnownPage === lastKnownPage &&
+        progressWentStale
       ) stuckCount++;
       else stuckCount = 0;
 
@@ -4857,6 +4942,11 @@
     if ('page' in data && 'num_items' in data && 'content' in data) {
       lastLoadedPage = Number(data.page);
       lastNumItems = Number(data.num_items) || DEFAULT_PAGE_SIZE;
+      markSearchProgress({
+        page: lastLoadedPage,
+        loaded: getLoadedGamesCount(),
+        height: document.body?.scrollHeight || 0
+      });
 
       const status = document.querySelector('#tm-itch-status');
 
