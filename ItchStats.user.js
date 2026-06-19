@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.2
+// @version      6.4.3
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1056,6 +1056,23 @@
 
     .tm-stat-current {
       font-weight: 400;
+    }
+
+    .tm-stat-current.tm-stat-stale-current {
+      color: rgba(255,255,255,.52);
+    }
+
+    .tm-stat-stale-marker {
+      display: inline-flex;
+      vertical-align: -2px;
+      margin-left: 5px;
+      color: rgba(255,255,255,.58);
+    }
+
+    .tm-stat-stale-marker svg {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
     }
 
     .tm-stat-checkbox {
@@ -5745,23 +5762,45 @@
     return '#' + record.globalPosition;
   }
 
+  function isRecordFromToday(record) {
+    if (!record) return false;
+
+    const todayKey = getLocalDayKey();
+    const recordDayKey = String(record.localDayKey || '') || getLocalDayKey(record.foundAt);
+    return !!todayKey && recordDayKey === todayKey;
+  }
+
   function getCurrentDeltaMarker(currentRecord, bestRecord) {
-    if (!currentRecord || !bestRecord) return '';
+    if (!currentRecord || !bestRecord || !isRecordFromToday(currentRecord)) return '';
 
     const currentRank = Number(currentRecord.globalPosition || Number.MAX_SAFE_INTEGER);
     const bestRank = Number(bestRecord.globalPosition || Number.MAX_SAFE_INTEGER);
 
     if (!Number.isFinite(currentRank) || !Number.isFinite(bestRank)) return '';
-    if (currentRank > bestRank) return ' 📉';
     if (currentRank < bestRank) return ' 📈';
     return '';
   }
 
+  function renderStaleRankMarker() {
+    return `
+      <span class="tm-stat-stale-marker" title="Рейтинг не обновлялся сегодня" aria-label="Рейтинг не обновлялся сегодня">
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none">
+          <circle cx="8" cy="8" r="5.5" stroke-width="1.8"></circle>
+          <path d="M8 4.8v3.4l2.4 1.4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </span>
+    `;
+  }
+
   function renderStatCell(record, options = {}) {
     const text = record ? formatStatCell(record) : '🔎';
-    const className = options.current ? 'tm-stat-current' : '';
+    const stale = options.current && record && !isRecordFromToday(record);
+    const className = [
+      options.current ? 'tm-stat-current' : '',
+      stale ? 'tm-stat-stale-current' : ''
+    ].filter(Boolean).join(' ');
     const marker = options.current ? getCurrentDeltaMarker(record, options.bestRecord) : '';
-    const content = `${escapeHtml(text)}${escapeHtml(marker)}`;
+    const content = `${escapeHtml(text)}${escapeHtml(marker)}${stale ? renderStaleRankMarker() : ''}`;
 
     if (options.href && options.current) {
       const buttonClass = ['tm-stat-link', className].filter(Boolean).join(' ');
