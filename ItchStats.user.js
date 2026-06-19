@@ -1817,6 +1817,32 @@
       vertical-align: middle;
     }
 
+    .tm-referrer-rank-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 56px;
+      margin: 0 0 0 8px;
+      padding: 4px 9px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #2e5665, #182f39);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 6px 14px rgba(0,0,0,.18);
+      color: #fff !important;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      text-decoration: none !important;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .tm-referrer-rank-badge:hover {
+      color: #fff !important;
+      filter: brightness(1.08);
+      text-decoration: none !important;
+    }
+
     .tm-primary-button {
       background: linear-gradient(135deg, var(--tm-accent), var(--tm-accent-strong));
       color: #fff;
@@ -3204,6 +3230,38 @@
     return upsertGameRecord(safeGame, record);
   }
 
+  function saveNotFoundPosition(game) {
+    const safeGame = game || {
+      id: null,
+      name: targetText || 'Unknown game'
+    };
+    const foundAt = Date.now();
+
+    const record = {
+      url: location.href,
+      path: location.pathname,
+      contextKey: getSearchContextKey(),
+      tags: getSearchTags(),
+      page: getEstimatedCurrentPage(),
+      pageSize: lastNumItems || DEFAULT_PAGE_SIZE,
+      positionOnPage: 0,
+      globalPosition: Number.MAX_SAFE_INTEGER,
+      loadedGamesCount: getLoadedGamesCount(),
+      meta: getSearchMeta(),
+      foundAt,
+      localDayKey: getLocalDayKey(foundAt),
+      localHourKey: getLocalHourKey(foundAt),
+      notFound: true,
+      displayRank: '-',
+      game: {
+        id: safeGame?.id || null,
+        name: safeGame?.name || targetText || 'Unknown game'
+      }
+    };
+
+    return upsertGameRecord(safeGame, record);
+  }
+
   function getCurrentSearchUrlKey() {
     return location.origin + location.pathname + location.search;
   }
@@ -4260,6 +4318,84 @@
     }, null);
   }
 
+  function getLatestRankRecord(records) {
+    return (Array.isArray(records) ? records : []).reduce((latest, record) => {
+      if (!record || (!isFiniteRankRecord(record) && !isTrueOverflowRecord(record))) return latest;
+      if (!latest) return record;
+      return Number(record?.foundAt || 0) >= Number(latest?.foundAt || 0) ? record : latest;
+    }, null);
+  }
+
+  function getLatestSummaryRankForGame(game, item) {
+    if (!game || !item?.section || !item?.label || !item?.series) return null;
+    return getLatestRankRecord(getQueueItemRecords(getStoredRecordsForGame(game), item));
+  }
+
+  function getReferrerRankBadges(game, href) {
+    if (!game) return [];
+
+    const absolute = toAbsoluteItchUrl(href);
+    if (!absolute) return [];
+
+    let url = null;
+    try {
+      url = new URL(absolute);
+    } catch (_) {
+      return [];
+    }
+
+    if (normalize(url.hostname) !== 'itch.io' || !url.pathname.startsWith('/games')) return [];
+
+    const series = getSearchSeriesFromPath(url.pathname) || 'popular';
+    const parts = getIntersectionPartsFromReferrerHref(absolute);
+    const badges = [];
+
+    if (parts.length >= 2) {
+      const label = parts.map(part => part.label).join(' + ');
+      const intersectionUrls = buildIntersectionUrls(parts);
+      const latestRecord = getLatestSummaryRankForGame(game, {
+        section: 'intersections',
+        label,
+        id: buildIntersectionId(parts),
+        series
+      });
+
+      if (latestRecord) {
+        badges.push({
+          text: `INT ${formatStatCell(latestRecord)}`,
+          title: `Последняя позиция пересечения: ${label}`,
+          href: series === 'new-and-popular'
+            ? intersectionUrls.newPopularUrl
+            : buildSeriesUrl(series, intersectionUrls.popularUrl)
+        });
+      }
+    }
+
+    const seenTags = new Set();
+    parts
+      .filter(part => part.type === 'tag')
+      .forEach(part => {
+        const tagKey = normalize(part.label);
+        if (!tagKey || seenTags.has(tagKey)) return;
+        seenTags.add(tagKey);
+
+        const latestRecord = getLatestSummaryRankForGame(game, {
+          section: 'tags',
+          label: part.label,
+          series
+        });
+        if (!latestRecord) return;
+
+        badges.push({
+          text: `TAG ${formatStatCell(latestRecord)}`,
+          title: `Последняя позиция тега: ${part.label}`,
+          href: buildSeriesUrl(series, part.href)
+        });
+      });
+
+    return badges.filter(item => item.href && item.text);
+  }
+
   function findDashboardTitleAnchor(row) {
     return row.querySelector('.game_title')
       || row.querySelector('.title')
@@ -4793,7 +4929,9 @@
             ? 'Не найдено: список загружен полностью.\n'
             : `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n`) +
           `Пролистано игр: ${loadedGamesCount}`;
-        if (!listFullyLoaded) {
+        if (listFullyLoaded) {
+          saveNotFoundPosition(safeTargetGame);
+        } else {
           saveLimitReachedPosition(safeTargetGame);
         }
         if (refreshActive) {
@@ -4843,6 +4981,7 @@
         if (noListGrowth && reachedDocumentEnd) {
           searching = false;
           button.textContent = 'Найти и листать';
+          saveNotFoundPosition(activeTargetGame);
           status.textContent =
             `Не найдено: список загружен полностью.\n` +
             `Пролистано игр: ${afterLoaded}`;
@@ -4892,6 +5031,7 @@
       if (stuckCount >= 6) {
         searching = false;
         button.textContent = 'Найти и листать';
+        saveNotFoundPosition(activeTargetGame);
         status.textContent =
           `Не найдено до конца страницы.\n` +
           `Пролистано игр: ${getLoadedGamesCount()}`;
@@ -8311,8 +8451,25 @@
         const link = firstCell?.querySelector?.('a[href]');
         if (!firstCell || !link) return;
 
+        firstCell.querySelectorAll('[data-tm-referrer-rank]').forEach(node => node.remove());
         const existingButton = firstCell.querySelector('[data-tm-referrer-intersection]');
         const href = link.href || link.getAttribute('href') || '';
+        const rankBadges = getReferrerRankBadges(game, href);
+        let insertAfter = link;
+
+        rankBadges.forEach(item => {
+          const badge = document.createElement('a');
+          badge.className = 'tm-referrer-rank-badge';
+          badge.textContent = item.text;
+          badge.title = item.title;
+          badge.href = item.href;
+          badge.target = '_blank';
+          badge.rel = 'noopener noreferrer';
+          badge.setAttribute('data-tm-referrer-rank', '1');
+          insertAfter.insertAdjacentElement('afterend', badge);
+          insertAfter = badge;
+        });
+
         const parts = getIntersectionPartsFromReferrerHref(href);
 
         if (parts.length < 2) {
@@ -8345,7 +8502,7 @@
         }
 
         if (button !== existingButton) {
-          link.insertAdjacentElement('afterend', button);
+          insertAfter.insertAdjacentElement('afterend', button);
         }
       });
     }
