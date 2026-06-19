@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.7
+// @version      6.3.8
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -339,6 +339,8 @@
       --tm-accent: #D36D6D;
       --tm-accent-strong: #bc5b5b;
       --tm-accent-soft: rgba(211,109,109,.28);
+      --tm-ui-z: 1000;
+      --tm-ui-z-top: 1001;
     }
 
     #tm-cloudflare-disable-warning {
@@ -545,7 +547,7 @@
       position: fixed;
       top: 64px;
       right: 16px;
-      z-index: 999999;
+      z-index: var(--tm-ui-z);
       background: #111;
       color: white;
       border-radius: 12px;
@@ -585,7 +587,7 @@
       position: fixed;
       top: 64px;
       right: 16px;
-      z-index: 999999;
+      z-index: var(--tm-ui-z);
       width: 46px;
       height: 46px;
       border: 0;
@@ -1190,7 +1192,7 @@
       position: fixed;
       top: 14px;
       left: 50%;
-      z-index: 1000000;
+      z-index: var(--tm-ui-z-top);
       display: flex;
       align-items: flex-start;
       gap: 12px;
@@ -1308,7 +1310,7 @@
       width: min(280px, calc(100vw - 24px));
       max-height: calc(100vh - 96px);
       overflow: auto;
-      z-index: 100001;
+      z-index: var(--tm-ui-z-top);
       display: flex;
       flex-direction: column;
       gap: 10px;
