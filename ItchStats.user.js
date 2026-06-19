@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.5
+// @version      6.3.6
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -4438,6 +4438,17 @@
     return true;
   }
 
+  function isNearDocumentBottom(thresholdPx = 32) {
+    const scrollTop = Number(window.scrollY || window.pageYOffset || 0);
+    const viewportBottom = scrollTop + Number(window.innerHeight || 0);
+    const bodyHeight = Number(document.body?.scrollHeight || 0);
+    const rootHeight = Number(document.documentElement?.scrollHeight || 0);
+    const documentHeight = Math.max(bodyHeight, rootHeight);
+
+    if (documentHeight <= 0) return false;
+    return viewportBottom >= documentHeight - Math.max(0, Number(thresholdPx || 0));
+  }
+
   async function waitForSearchResultsAdvance(snapshot, status = null, options = {}) {
     let startedAt = Date.now();
     const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 8000;
@@ -4811,6 +4822,11 @@
       const afterHeight = document.body.scrollHeight;
       const afterLoaded = getLoadedGamesCount();
       const afterPage = Number(lastLoadedPage || 0);
+      const reachedDocumentEnd = isNearDocumentBottom();
+      const noListGrowth =
+        afterHeight === beforeHeight &&
+        afterLoaded === beforeLoaded &&
+        afterPage === beforePage;
       const changedDuringBurst =
         afterY !== beforeY ||
         afterHeight !== beforeHeight ||
@@ -4818,6 +4834,24 @@
         afterPage !== beforePage;
 
       if (!advanced) {
+        if (noListGrowth && reachedDocumentEnd) {
+          searching = false;
+          button.textContent = 'Найти и листать';
+          status.textContent =
+            `Не найдено: список загружен полностью.\n` +
+            `Пролистано игр: ${afterLoaded}`;
+          if (refreshActive) {
+            setTimeout(() => {
+              advanceRefreshFlow({
+                status: 'not-found',
+                contextKey: getSearchContextKey(),
+                url: getCurrentSearchUrlKey()
+              });
+            }, 250);
+          }
+          return;
+        }
+
         await sleep(refreshActive ? SCROLL_INTERVAL : 260);
       }
 
