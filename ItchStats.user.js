@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.8
+// @version      6.3.9
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -10,8 +10,8 @@
 // @tag          utilities
 // @homepageURL  https://github.com/NnicanBuak/itch-stats
 // @grant        none
-// @updateURL    https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
-// @downloadURL  https://github.com/NnicanBuak/itch-stats/raw/refs/heads/main/ItchStats.user.js
+// @updateURL    https://raw.githubusercontent.com/NnicanBuak/itch-stats/main/ItchStats.user.js
+// @downloadURL  https://raw.githubusercontent.com/NnicanBuak/itch-stats/main/ItchStats.user.js
 // @icon         https://itch.io/favicon.ico
 // ==/UserScript==
 
