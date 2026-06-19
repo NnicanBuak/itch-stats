@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.3
+// @version      6.4.4
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -2246,6 +2246,10 @@
     return duration === 90 ? 90 : duration === 30 ? 30 : duration === 7 ? 7 : 1;
   }
 
+  function normalizeSummaryChartScaleMode(value) {
+    return value === 'minmax' ? 'minmax' : 'fixed';
+  }
+
   function normalizeSummaryChartTrends(trends) {
     return {
       linear: !!trends?.linear,
@@ -2267,9 +2271,10 @@
     const pref = allPrefs?.[chartKey];
     const mode = visibleModes.includes(pref?.mode) ? pref.mode : (visibleModes[0] || '');
     const duration = normalizeSummaryChartDuration(pref?.duration);
+    const scaleMode = normalizeSummaryChartScaleMode(pref?.scaleMode);
     const trends = normalizeSummaryChartTrends(pref?.trends);
     const hiddenSeries = normalizeSummaryChartHiddenSeries(pref?.hiddenSeries);
-    return { mode, duration, trends, hiddenSeries };
+    return { mode, duration, scaleMode, trends, hiddenSeries };
   }
 
   function setSummaryChartPref(chartKey, pref) {
@@ -2279,6 +2284,7 @@
     allPrefs[chartKey] = {
       mode: String(pref?.mode || ''),
       duration: normalizeSummaryChartDuration(pref?.duration),
+      scaleMode: normalizeSummaryChartScaleMode(pref?.scaleMode),
       trends: normalizeSummaryChartTrends(pref?.trends),
       hiddenSeries: normalizeSummaryChartHiddenSeries(pref?.hiddenSeries)
     };
@@ -6157,8 +6163,9 @@
     return !!record?.notFound;
   }
 
-  function resolveChartSeriesPoints(series) {
+  function resolveChartSeriesPoints(series, options = {}) {
     const CHART_OVERFLOW_RANK = 1000;
+    const includeOverflow = options.includeOverflow !== false;
     const exactValues = series.flatMap(item => item.points
       .filter(point => point && !point.isOverflow && Number(point.value) <= CHART_OVERFLOW_RANK)
       .map(point => Number(point.value))
@@ -6172,6 +6179,9 @@
         points: item.points.map(point => {
           if (!point) return null;
           const value = Number(point.value);
+          if (!includeOverflow && (point.isNotFound || point.isOverflow || value > CHART_OVERFLOW_RANK)) {
+            return null;
+          }
           if (point.isNotFound) {
             return { ...point, isOverflow: true, plotValue: CHART_OVERFLOW_RANK, displayValue: 'Нет в списке' };
           }
@@ -6181,6 +6191,26 @@
         })
       }))
     };
+  }
+
+  function getChartValueBounds(values, scaleMode = 'fixed') {
+    const CHART_OVERFLOW_RANK = 1000;
+
+    if (normalizeSummaryChartScaleMode(scaleMode) === 'fixed') {
+      return {
+        minValue: 1,
+        maxValue: CHART_OVERFLOW_RANK
+      };
+    }
+
+    let minValue = Math.min(...values);
+    let maxValue = Math.max(...values);
+    if (minValue === maxValue) {
+      minValue = Math.max(1, minValue - 1);
+      maxValue += 1;
+    }
+
+    return { minValue, maxValue };
   }
 
   function getChartCoordinates(points, getX, getY) {
@@ -6474,17 +6504,7 @@
       return `<div class="tm-stat-muted tm-stat-chart">No exact rank data for the last 7 days.</div>`;
     }
 
-    const CHART_OVERFLOW_RANK = 1000;
-    let minValue = Math.min(...values);
-    let maxValue = Math.max(...values, CHART_OVERFLOW_RANK);
-    if (minValue === maxValue) {
-      if (maxValue === CHART_OVERFLOW_RANK) {
-        minValue = 1;
-      } else {
-        minValue = Math.max(1, minValue - 1);
-        maxValue += 1;
-      }
-    }
+    const { minValue, maxValue } = getChartValueBounds(values, options.scaleMode);
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
     const getY = value => {
@@ -6668,6 +6688,10 @@
                 ${[1, 7, 30, 90].map((duration, index) => `
                   <button class="tm-stat-chart-toggle-button ${index === 0 ? 'tm-active' : ''}" type="button" data-chart-duration="${duration}">${duration}d</button>
                 `).join('')}
+              </div>
+              <div class="tm-stat-chart-toggle">
+                <button class="tm-stat-chart-toggle-button tm-active" type="button" data-chart-scale="fixed" title="Показать шкалу рейтинга #1-#1000">1-1000</button>
+                <button class="tm-stat-chart-toggle-button" type="button" data-chart-scale="minmax" title="Показать только диапазон найденных значений">Min-Max</button>
               </div>
             </div>
           </div>
@@ -6929,7 +6953,7 @@
     }
   }
 
-  function renderSectionToggleChartInto(root, chartData, mode = 'popular', durationDays = 1) {
+  function renderSectionToggleChartInto(root, chartData, mode = 'popular', durationDays = 1, scaleMode = '') {
     if (!root) return;
 
     const chartKey = root.getAttribute('data-chart-root') || '';
@@ -6940,6 +6964,7 @@
     const durationLabel = `${durationDays}d`;
     const modeLabel = isKnownSeriesKey(mode) ? getSeriesLabel(mode) : 'Section not selected';
     const chartPref = getSummaryChartPref(chartKey, Object.keys(chartData?.durations?.[durationDays]?.modes || chartData?.durations?.[1]?.modes || {}));
+    const chartScaleMode = normalizeSummaryChartScaleMode(scaleMode || chartPref.scaleMode);
     const trendState = normalizeSummaryChartTrends(chartPref.trends);
     const hiddenSeriesSet = new Set(normalizeSummaryChartHiddenSeries(chartPref.hiddenSeries));
     const durationData = chartData?.durations?.[durationDays] || chartData?.durations?.[1] || null;
@@ -6965,6 +6990,10 @@
       }
 
       if (!series.length) {
+        if (tooltip) {
+          tooltip.classList.remove('tm-visible');
+          tooltip.innerHTML = '';
+        }
         const legendMarkup = allSeries.map(item => `
           <div class="tm-stat-chart-legend-item tm-series-hidden" tabindex="0" data-chart-series-key="${escapeHtml(item.key)}" title="${escapeHtml(item.label)}">
             <span class="tm-stat-chart-legend-swatch" style="background:${item.color}"></span>
@@ -7000,7 +7029,9 @@
       const plotHeight = height - margin.top - margin.bottom;
       const visualPadding = 10;
       const innerPlotHeight = Math.max(1, plotHeight - (visualPadding * 2));
-      const preparedChart = resolveChartSeriesPoints(series);
+      const preparedChart = resolveChartSeriesPoints(series, {
+        includeOverflow: chartScaleMode === 'fixed'
+      });
       series = preparedChart.series;
       const values = preparedChart.hasExactValues
         ? preparedChart.exactValues
@@ -7008,20 +7039,14 @@
 
       if (!values.length) {
         body.innerHTML = `<div class="tm-stat-muted">No exact rank data for the last ${durationLabel}.</div>`;
+        if (tooltip) {
+          tooltip.classList.remove('tm-visible');
+          tooltip.innerHTML = '';
+        }
         return;
       }
 
-    const CHART_OVERFLOW_RANK = 1000;
-    let minValue = Math.min(...values);
-    let maxValue = Math.max(...values, CHART_OVERFLOW_RANK);
-    if (minValue === maxValue) {
-      if (maxValue === CHART_OVERFLOW_RANK) {
-        minValue = 1;
-      } else {
-        minValue = Math.max(1, minValue - 1);
-        maxValue += 1;
-      }
-    }
+    const { minValue, maxValue } = getChartValueBounds(values, chartScaleMode);
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
     const getY = value => {
@@ -7156,7 +7181,7 @@
         label: item.label,
         color: item.color,
         point: item.points[index]
-      })).sort((a, b) => {
+      })).filter(row => chartScaleMode === 'fixed' || row.point).sort((a, b) => {
         const aValue = Number(a.point?.value);
         const bValue = Number(b.point?.value);
         const aHasValue = Number.isFinite(aValue);
@@ -7249,10 +7274,11 @@
         setSummaryChartPref(chartKey, {
           mode,
           duration: durationDays,
+          scaleMode: chartScaleMode,
           trends: nextTrends,
           hiddenSeries: Array.from(hiddenSeriesSet)
         });
-        renderSectionToggleChartInto(root, chartData, mode, durationDays);
+        renderSectionToggleChartInto(root, chartData, mode, durationDays, chartScaleMode);
       });
     });
 
@@ -7268,10 +7294,11 @@
         setSummaryChartPref(chartKey, {
           mode,
           duration: durationDays,
+          scaleMode: chartScaleMode,
           trends: trendState,
           hiddenSeries: Array.from(nextHiddenSeries)
         });
-        renderSectionToggleChartInto(root, chartData, mode, durationDays);
+        renderSectionToggleChartInto(root, chartData, mode, durationDays, chartScaleMode);
       };
       item.addEventListener('mouseenter', activate);
       item.addEventListener('focus', activate);
@@ -8243,14 +8270,19 @@
       const initialPref = getSummaryChartPref(chartKey, visibleSeries);
       let currentMode = initialPref.mode;
       let currentDuration = initialPref.duration;
+      let currentScaleMode = initialPref.scaleMode;
 
       root.querySelectorAll('[data-chart-duration]').forEach(button => {
         const buttonDuration = Number(button.getAttribute('data-chart-duration')) || 1;
         button.classList.toggle('tm-active', buttonDuration === currentDuration);
       });
+      root.querySelectorAll('[data-chart-scale]').forEach(button => {
+        const buttonScaleMode = normalizeSummaryChartScaleMode(button.getAttribute('data-chart-scale'));
+        button.classList.toggle('tm-active', buttonScaleMode === currentScaleMode);
+      });
 
       try {
-        renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+        renderSectionToggleChartInto(root, chartData, currentMode, currentDuration, currentScaleMode);
       } catch (error) {
         console.warn('[itch-stats] Failed to initialize chart', { chartKey, error });
       }
@@ -8262,6 +8294,7 @@
           setSummaryChartPref(chartKey, {
             mode: currentMode,
             duration: currentDuration,
+            scaleMode: currentScaleMode,
             trends: getSummaryChartPref(chartKey, visibleSeries).trends,
             hiddenSeries: getSummaryChartPref(chartKey, visibleSeries).hiddenSeries
           });
@@ -8269,11 +8302,37 @@
             other.classList.toggle('tm-active', other === button);
           });
           try {
-            renderSectionToggleChartInto(root, chartData, currentMode, currentDuration);
+            renderSectionToggleChartInto(root, chartData, currentMode, currentDuration, currentScaleMode);
           } catch (error) {
             console.warn('[itch-stats] Failed to update chart duration', {
               chartKey,
               duration: currentDuration,
+              error
+            });
+          }
+        });
+      });
+
+      root.querySelectorAll('[data-chart-scale]').forEach(button => {
+        button.addEventListener('click', () => {
+          const nextScaleMode = normalizeSummaryChartScaleMode(button.getAttribute('data-chart-scale'));
+          currentScaleMode = nextScaleMode;
+          setSummaryChartPref(chartKey, {
+            mode: currentMode,
+            duration: currentDuration,
+            scaleMode: currentScaleMode,
+            trends: getSummaryChartPref(chartKey, visibleSeries).trends,
+            hiddenSeries: getSummaryChartPref(chartKey, visibleSeries).hiddenSeries
+          });
+          root.querySelectorAll('[data-chart-scale]').forEach(other => {
+            other.classList.toggle('tm-active', other === button);
+          });
+          try {
+            renderSectionToggleChartInto(root, chartData, currentMode, currentDuration, currentScaleMode);
+          } catch (error) {
+            console.warn('[itch-stats] Failed to update chart scale', {
+              chartKey,
+              scaleMode: currentScaleMode,
               error
             });
           }
@@ -8433,6 +8492,7 @@
         setSummaryChartPref(sectionKey, {
           mode: seriesKey,
           duration: currentPref.duration,
+          scaleMode: currentPref.scaleMode,
           trends: currentPref.trends,
           hiddenSeries: currentPref.hiddenSeries
         });
