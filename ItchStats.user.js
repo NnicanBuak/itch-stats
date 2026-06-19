@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.0
+// @version      6.4.2
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1599,6 +1599,12 @@
       stroke-width: 1.5;
       opacity: 1;
       transition: opacity .12s ease;
+    }
+
+    .tm-stat-chart-point.tm-not-found {
+      stroke: rgba(255,255,255,.9);
+      stroke-width: 2;
+      stroke-dasharray: 2 2;
     }
 
     .tm-stat-chart-point.tm-dimmed,
@@ -3252,7 +3258,7 @@
       localDayKey: getLocalDayKey(foundAt),
       localHourKey: getLocalHourKey(foundAt),
       notFound: true,
-      displayRank: '-',
+      displayRank: 'Нет в списке',
       game: {
         id: safeGame?.id || null,
         name: safeGame?.name || targetText || 'Unknown game'
@@ -5734,6 +5740,7 @@
 
   function formatStatCell(record) {
     if (!record) return '-';
+    if (record.notFound) return 'Нет в списке';
     if (record.displayRank) return record.displayRank;
     return '#' + record.globalPosition;
   }
@@ -5948,6 +5955,7 @@
   }
 
   function collectBestRankByDay(records, days, dayKeySet) {
+    const CHART_OVERFLOW_RANK = 1000;
     const bestByDay = new Map();
 
     records.forEach(record => {
@@ -5961,6 +5969,18 @@
 
       if (isFiniteRankRecord(record)) {
         const rank = Number(record.globalPosition);
+        if (rank > CHART_OVERFLOW_RANK) {
+          if (!previous || (previous.isOverflow && foundAt >= previous.foundAt)) {
+            bestByDay.set(dayKey, {
+              value: CHART_OVERFLOW_RANK,
+              foundAt,
+              isOverflow: true,
+              displayValue: `>${CHART_OVERFLOW_RANK}`
+            });
+          }
+          return;
+        }
+
         if (!previous || previous.isOverflow || rank < previous.value || (rank === previous.value && foundAt >= previous.foundAt)) {
           bestByDay.set(dayKey, {
             value: rank,
@@ -5971,14 +5991,16 @@
         return;
       }
 
-      if (!isTrueOverflowRecord(record)) return;
+      const isNotFound = isChartNotFoundRecord(record);
+      if (!isChartOverflowRecord(record) && !isNotFound) return;
 
       if (!previous || (previous.isOverflow && foundAt >= previous.foundAt)) {
         bestByDay.set(dayKey, {
-          value: Number(record?.loadedGamesCount || 0) || Number.MAX_SAFE_INTEGER,
+          value: CHART_OVERFLOW_RANK,
           foundAt,
           isOverflow: true,
-          displayValue: String(record.displayRank)
+          isNotFound,
+          displayValue: isNotFound ? 'Нет в списке' : `>${CHART_OVERFLOW_RANK}`
         });
       }
     });
@@ -5991,16 +6013,21 @@
         value: point.value,
         foundAt: point.foundAt,
         isOverflow: !!point.isOverflow,
+        isNotFound: !!point.isNotFound,
         displayValue: point.displayValue || ''
       } : null;
     });
   }
 
   function collectLatestRankByHour(records, hours, hourKeySet) {
+    const CHART_OVERFLOW_RANK = 1000;
     const latestByHour = new Map();
 
     records.forEach(record => {
-      if (!isFiniteRankRecord(record)) return;
+      const isFiniteRank = isFiniteRankRecord(record);
+      const isNotFound = !isFiniteRank && isChartNotFoundRecord(record);
+      const isOverflow = !isFiniteRank && isChartOverflowRecord(record);
+      if (!isFiniteRank && !isOverflow && !isNotFound) return;
 
       const foundAt = Number(record?.foundAt || 0);
       const date = new Date(foundAt);
@@ -6012,10 +6039,20 @@
       const rank = Number(record.globalPosition);
       const previous = latestByHour.get(hourKey);
       if (!previous || foundAt >= previous.foundAt) {
-        latestByHour.set(hourKey, {
-          value: rank,
-          foundAt
-        });
+        if (isNotFound || isOverflow || rank > CHART_OVERFLOW_RANK) {
+          latestByHour.set(hourKey, {
+            value: CHART_OVERFLOW_RANK,
+            foundAt,
+            isOverflow: true,
+            isNotFound,
+            displayValue: isNotFound ? 'Нет в списке' : `>${CHART_OVERFLOW_RANK}`
+          });
+        } else {
+          latestByHour.set(hourKey, {
+            value: rank,
+            foundAt
+          });
+        }
       }
     });
 
@@ -6025,7 +6062,10 @@
         dayKey: hour.dayKey,
         dayLabel: hour.fullLabel || hour.label,
         value: point.value,
-        foundAt: point.foundAt
+        foundAt: point.foundAt,
+        isOverflow: !!point.isOverflow,
+        isNotFound: !!point.isNotFound,
+        displayValue: point.displayValue || ''
       } : null;
     });
   }
@@ -6070,12 +6110,20 @@
     return Number.isFinite(value) ? `#${value}` : '--';
   }
 
+  function isChartOverflowRecord(record) {
+    return !!record && isTrueOverflowRecord(record);
+  }
+
+  function isChartNotFoundRecord(record) {
+    return !!record?.notFound;
+  }
+
   function resolveChartSeriesPoints(series) {
+    const CHART_OVERFLOW_RANK = 1000;
     const exactValues = series.flatMap(item => item.points
-      .filter(point => point && !point.isOverflow)
+      .filter(point => point && !point.isOverflow && Number(point.value) <= CHART_OVERFLOW_RANK)
       .map(point => Number(point.value))
       .filter(Number.isFinite));
-    const fallbackMax = exactValues.length ? Math.max(...exactValues) : 2;
 
     return {
       hasExactValues: exactValues.length > 0,
@@ -6084,8 +6132,12 @@
         ...item,
         points: item.points.map(point => {
           if (!point) return null;
-          return point.isOverflow
-            ? { ...point, plotValue: fallbackMax + 1 }
+          const value = Number(point.value);
+          if (point.isNotFound) {
+            return { ...point, isOverflow: true, plotValue: CHART_OVERFLOW_RANK, displayValue: 'Нет в списке' };
+          }
+          return point.isOverflow || value > CHART_OVERFLOW_RANK
+            ? { ...point, isOverflow: true, plotValue: CHART_OVERFLOW_RANK, displayValue: `>${CHART_OVERFLOW_RANK}` }
             : { ...point, plotValue: Number(point.value) };
         })
       }))
@@ -6329,8 +6381,9 @@
         const numericValue = getChartPointNumericValue(point);
         if (!Number.isFinite(numericValue)) return '';
         const title = `${item.label} • ${point.dayLabel} • ${getChartPointDisplayValue(point)} • ${getSeriesLabel(point.series || 'popular')}`;
+        const pointClass = `tm-stat-chart-point${point.isNotFound ? ' tm-not-found' : ''}`;
         return `
-          <circle class="tm-stat-chart-point" data-chart-point-index="${pointIndex}" data-chart-series-key="${escapeHtml(seriesKey)}" cx="${getX(pointIndex)}" cy="${getY(numericValue)}" r="3.5" fill="${color}">
+          <circle class="${pointClass}" data-chart-point-index="${pointIndex}" data-chart-series-key="${escapeHtml(seriesKey)}" cx="${getX(pointIndex)}" cy="${getY(numericValue)}" r="3.5" fill="${color}">
             <title>${escapeHtml(title)}</title>
           </circle>
         `;
@@ -6382,11 +6435,16 @@
       return `<div class="tm-stat-muted tm-stat-chart">No exact rank data for the last 7 days.</div>`;
     }
 
+    const CHART_OVERFLOW_RANK = 1000;
     let minValue = Math.min(...values);
-    let maxValue = Math.max(...values);
+    let maxValue = Math.max(...values, CHART_OVERFLOW_RANK);
     if (minValue === maxValue) {
-      minValue = Math.max(1, minValue - 1);
-      maxValue += 1;
+      if (maxValue === CHART_OVERFLOW_RANK) {
+        minValue = 1;
+      } else {
+        minValue = Math.max(1, minValue - 1);
+        maxValue += 1;
+      }
     }
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
@@ -6682,6 +6740,7 @@
       .tm-stat-chart-trend { fill: none; stroke-width: 1.5; stroke-dasharray: 6 4; opacity: .95; }
       .tm-stat-chart-trend-ma { stroke-dasharray: 2 5; opacity: .78; }
       .tm-stat-chart-point { stroke: rgba(17,17,17,.92); stroke-width: 1.5; }
+      .tm-stat-chart-point.tm-not-found { stroke: rgba(255,255,255,.9); stroke-width: 2; stroke-dasharray: 2 2; }
       text { font-family: Arial, sans-serif; }
     `;
     clone.insertBefore(style, background.nextSibling);
@@ -6913,11 +6972,16 @@
         return;
       }
 
+    const CHART_OVERFLOW_RANK = 1000;
     let minValue = Math.min(...values);
-    let maxValue = Math.max(...values);
+    let maxValue = Math.max(...values, CHART_OVERFLOW_RANK);
     if (minValue === maxValue) {
-      minValue = Math.max(1, minValue - 1);
-      maxValue += 1;
+      if (maxValue === CHART_OVERFLOW_RANK) {
+        minValue = 1;
+      } else {
+        minValue = Math.max(1, minValue - 1);
+        maxValue += 1;
+      }
     }
 
     const getX = index => margin.left + (days.length === 1 ? plotWidth / 2 : (plotWidth / (days.length - 1)) * index);
