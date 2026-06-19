@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.3.6
+// @version      6.3.7
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -4694,7 +4694,11 @@
     const button = document.querySelector('#tm-itch-search');
     const status = document.querySelector('#tm-itch-status');
     const refreshState = loadRefreshState();
-    const refreshActive = !!(refreshState && refreshState.phase === 'search' && isSameGame(refreshState.game, targetGame));
+    const refreshGame = refreshState && refreshState.phase === 'search'
+      ? refreshState.game
+      : null;
+    const refreshActive = !!refreshGame;
+    const activeTargetGame = targetGame || refreshGame;
     const searchMode = getSearchModeOptions(refreshActive);
 
     searching = true;
@@ -4716,7 +4720,7 @@
 
     const initiallyFound = findGameByName(targetText);
     if (!initiallyFound) {
-      await jumpToLastLoadedGame(targetGame, status, searchMode);
+      await jumpToLastLoadedGame(activeTargetGame, status, searchMode);
     }
 
     let lastScrollY = -1;
@@ -4748,7 +4752,7 @@
       const found = findGameByName(targetText);
 
       if (found) {
-        const safeTargetGame = targetGame || {
+        const safeTargetGame = activeTargetGame || {
           id: null,
           name: targetText || getCardTitle(found) || 'Unknown game'
         };
@@ -4773,7 +4777,7 @@
       const currentPage = getEstimatedCurrentPage();
 
       if (currentPage >= MAX_SEARCH_PAGE) {
-        const safeTargetGame = targetGame || {
+        const safeTargetGame = activeTargetGame || {
           id: null,
           name: targetText || 'Unknown game'
         };
@@ -4790,7 +4794,7 @@
         if (!listFullyLoaded) {
           saveLimitReachedPosition(safeTargetGame);
         }
-        if (refreshActive && targetGame) {
+        if (refreshActive) {
           setTimeout(() => {
             advanceRefreshFlow({
               status: 'not-found',
