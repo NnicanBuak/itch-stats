@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.8
+// @version      6.4.9
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -24,6 +24,7 @@
   const SCROLL_BURST_PAUSE = 85;
   const DEFAULT_PAGE_SIZE = 36;
   const MAX_SEARCH_PAGE = 30;
+  const MAX_SEARCH_RESULTS = 1000;
   const SEARCH_SERIES = [
     { key: 'popular', label: 'Popular', pathPart: '' },
     { key: 'new-and-popular', label: 'New & Popular', pathPart: 'new-and-popular' },
@@ -2453,8 +2454,8 @@
       return null;
     }
 
-    const startedAt = Number(parsed.startedAt || 0);
-    if (!startedAt || Date.now() - startedAt > REFRESH_STATE_MAX_AGE) {
+    const lastActivityAt = Number(parsed.updatedAt || parsed.startedAt || 0);
+    if (!lastActivityAt || Date.now() - lastActivityAt > REFRESH_STATE_MAX_AGE) {
       clearRefreshState();
       return null;
     }
@@ -2464,7 +2465,17 @@
 
   function saveRefreshState(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-    localStorage.setItem(STORAGE_KEY_REFRESH_STATE, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY_REFRESH_STATE, JSON.stringify({
+      ...data,
+      updatedAt: Date.now()
+    }));
+  }
+
+  function touchRefreshState() {
+    const state = loadRefreshState();
+    if (!state || state.phase !== 'search') return false;
+    saveRefreshState(state);
+    return true;
   }
 
   function clearRefreshState() {
@@ -3206,7 +3217,7 @@
 
   function formatOverflowRank(loadedGamesCount) {
     const loaded = Number(loadedGamesCount || 0);
-    if (loaded >= 1000) return '>1000';
+    if (loaded >= MAX_SEARCH_RESULTS) return `>${MAX_SEARCH_RESULTS}`;
     if (loaded > 0) return '>' + loaded;
     return '—';
   }
@@ -4571,100 +4582,118 @@
     searchPageRequestListeners.forEach(listener => listener(result));
   }
 
-  function waitForSearchPageRequest(afterSequence) {
+  function waitForSearchProgress(snapshot, timeoutMs = 4000) {
     return new Promise(resolve => {
       let settled = false;
+      const initialLoaded = Number(snapshot?.loaded || 0);
+      const initialHeight = Number(snapshot?.height || 0);
+      const afterSequence = Number(snapshot?.requestSequence || 0);
+      const observer = new MutationObserver(checkDom);
+      const timeout = setTimeout(() => finish({
+        status: document.querySelector('.grid_loader') ? 'timeout' : 'end'
+      }), timeoutMs);
 
       const finish = result => {
         if (settled) return;
         settled = true;
+        clearTimeout(timeout);
+        observer.disconnect();
         searchPageRequestListeners.delete(onResult);
         if (pendingSearchWaitCancel === cancel) pendingSearchWaitCancel = null;
         resolve(result);
       };
       const onResult = result => {
-        if (Number(result?.sequence || 0) > afterSequence) finish(result);
+        if (Number(result?.sequence || 0) <= afterSequence) return;
+        if (result?.status === 'error' || result?.status === 'end') {
+          finish(result);
+          return;
+        }
+        checkDom();
       };
       const cancel = () => finish({ status: 'cancelled' });
 
+      function checkDom() {
+        if (!searching) {
+          cancel();
+          return;
+        }
+        if (
+          getLoadedGamesCount() > initialLoaded ||
+          Number(document.body?.scrollHeight || 0) > initialHeight
+        ) {
+          finish({
+            status: 'loaded',
+            page: Number(lastLoadedPage || snapshot?.page || 0),
+            numItems: Number(lastNumItems || 0)
+          });
+        }
+      }
+
       pendingSearchWaitCancel = cancel;
       searchPageRequestListeners.add(onResult);
+      observer.observe(document.body, { childList: true, subtree: true });
 
       if (Number(lastSearchPageRequestResult?.sequence || 0) > afterSequence) {
-        finish(lastSearchPageRequestResult);
+        onResult(lastSearchPageRequestResult);
       } else if (!searching) {
         cancel();
+      } else {
+        checkDom();
       }
     });
   }
 
-  function waitForSearchDom(predicate) {
-    return new Promise(resolve => {
-      let settled = false;
-      const observer = new MutationObserver(check);
-
-      function finish(status) {
-        if (settled) return;
-        settled = true;
-        observer.disconnect();
-        if (pendingSearchWaitCancel === cancel) pendingSearchWaitCancel = null;
-        resolve(status);
-      }
-
-      function check() {
-        if (predicate()) finish('ready');
-      }
-
-      const cancel = () => finish('cancelled');
-      pendingSearchWaitCancel = cancel;
-
-      if (predicate()) {
-        finish('ready');
-        return;
-      }
-      if (!searching) {
-        cancel();
-        return;
-      }
-
-      observer.observe(document.body, { childList: true, subtree: true });
-      check();
-    });
+  async function forceSearchTailIntoView() {
+    const documentHeight = Math.max(
+      Number(document.body?.scrollHeight || 0),
+      Number(document.documentElement?.scrollHeight || 0)
+    );
+    window.scrollTo({ top: documentHeight, behavior: 'auto' });
+    await wait(120);
   }
 
   async function waitForSearchResultsAdvance(snapshot, status = null) {
     const initialPage = Number(snapshot?.page || 0);
     const initialLoaded = Number(snapshot?.loaded || 0);
     const initialHeight = Number(snapshot?.height || 0);
-    const afterSequence = Number(snapshot?.requestSequence || 0);
-
     if (snapshot?.hasGridLoader === false) {
       return { status: 'end', page: initialPage, numItems: 0 };
     }
 
-    if (status) {
-      const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
-      setSearchStatus(status, [
-        `Жду загрузку page ${nextPageHint}...`,
-        `Пролистано игр: ${initialLoaded}`
-      ]);
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (status) {
+        const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
+        setSearchStatus(status, [
+          `Жду загрузку page ${nextPageHint}...${attempt > 1 ? ` (попытка ${attempt}/${maxAttempts})` : ''}`,
+          `Пролистано игр: ${getLoadedGamesCount() || initialLoaded}`
+        ]);
+      }
+
+      const attemptSnapshot = attempt === 1
+        ? snapshot
+        : {
+          page: Number(lastLoadedPage || initialPage),
+          loaded: getLoadedGamesCount(),
+          height: Number(document.body?.scrollHeight || initialHeight),
+          requestSequence: searchPageRequestSequence
+        };
+      const progressPromise = waitForSearchProgress(attemptSnapshot);
+      await forceSearchTailIntoView();
+      const result = await progressPromise;
+
+      if (result.status === 'loaded' || result.status === 'end' || result.status === 'cancelled') {
+        return result;
+      }
+      if (!searching) return { status: 'cancelled' };
+      if (attempt < maxAttempts) await wait(250);
     }
 
-    const requestResult = await waitForSearchPageRequest(afterSequence);
-    if (requestResult.status !== 'loaded' && requestResult.status !== 'end') return requestResult;
-
-    if (requestResult.status === 'end') {
-      const domStatus = await waitForSearchDom(() => !document.querySelector('.grid_loader'));
-      return domStatus === 'ready' ? requestResult : { status: 'cancelled' };
-    }
-
-    const domStatus = await waitForSearchDom(() => (
-      getLoadedGamesCount() > initialLoaded ||
-      Number(document.body?.scrollHeight || 0) > initialHeight
-    ));
-    if (domStatus !== 'ready') return { status: 'cancelled' };
-
-    return requestResult;
+    return {
+      status: 'error',
+      page: Math.min(initialPage + 1, MAX_SEARCH_PAGE),
+      error: new Error('Search pagination did not advance after retries')
+    };
   }
 
   async function waitForSearchPageReady(status = null, timeoutMs = 90000) {
@@ -4806,6 +4835,26 @@
     };
   }
 
+  function completeSearch(options = {}) {
+    const button = options.button || document.querySelector('#tm-itch-search');
+    const status = options.status || document.querySelector('#tm-itch-status');
+
+    searching = false;
+    pausedByHiddenTab = false;
+    cancelPendingSearchWait();
+    if (button) button.textContent = 'Найти и листать';
+    if (status && options.statusText) status.textContent = options.statusText;
+
+    if (options.refreshActive) {
+      touchRefreshState();
+      advanceRefreshFlow(options.result || {
+        status: 'not-found',
+        contextKey: getSearchContextKey(),
+        url: getCurrentSearchUrlKey()
+      });
+    }
+  }
+
   function passiveScanOwnGames() {
     if (!isGamesPage) return;
 
@@ -4890,17 +4939,16 @@
         const record = highlightCard(found, safeTargetGame, false);
         scrollToCardAndPlayConfetti(found);
 
-        searching = false;
-        button.textContent = 'Найти и листать';
-        if (refreshActive) {
-          setTimeout(() => {
-            advanceRefreshFlow({
-              status: 'found',
-              contextKey: record?.contextKey || getSearchContextKey(),
-              url: getCurrentSearchUrlKey()
-            });
-          }, 250);
-        }
+        completeSearch({
+          button,
+          status,
+          refreshActive,
+          result: {
+            status: 'found',
+            contextKey: record?.contextKey || getSearchContextKey(),
+            url: getCurrentSearchUrlKey()
+          }
+        });
         return;
       }
 
@@ -4912,29 +4960,32 @@
           name: targetText || 'Unknown game'
         };
         const loadedGamesCount = getLoadedGamesCount();
-        const listFullyLoaded = isSearchListFullyLoaded(currentPage, loadedGamesCount);
+        const reachedResultLimit = loadedGamesCount >= MAX_SEARCH_RESULTS;
+        const listFullyLoaded = !reachedResultLimit && isSearchListFullyLoaded(currentPage, loadedGamesCount);
 
-        searching = false;
-        button.textContent = 'Найти и листать';
-        status.textContent =
-          (listFullyLoaded
-            ? 'Не найдено: список загружен полностью.\n'
-            : `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n`) +
+        const statusText =
+          (reachedResultLimit
+            ? `Остановлено: достигнут лимит ${MAX_SEARCH_RESULTS} игр.\n`
+            : (listFullyLoaded
+              ? 'Не найдено: список загружен полностью.\n'
+              : `Остановлено: достигнут лимит ${MAX_SEARCH_PAGE} page.\n`)) +
           `Пролистано игр: ${loadedGamesCount}`;
         if (listFullyLoaded) {
           saveNotFoundPosition(safeTargetGame);
         } else {
           saveLimitReachedPosition(safeTargetGame);
         }
-        if (refreshActive) {
-          setTimeout(() => {
-            advanceRefreshFlow({
-              status: 'not-found',
-              contextKey: getSearchContextKey(),
-              url: getCurrentSearchUrlKey()
-            });
-          }, 250);
-        }
+        completeSearch({
+          button,
+          status,
+          statusText,
+          refreshActive,
+          result: {
+            status: listFullyLoaded ? 'not-found' : 'limit-reached',
+            contextKey: getSearchContextKey(),
+            url: getCurrentSearchUrlKey()
+          }
+        });
         return;
       }
 
@@ -4947,26 +4998,35 @@
       if (advanceResult.status === 'cancelled') break;
 
       if (advanceResult.status === 'error') {
-        stopSearch(`Ошибка загрузки page ${advanceResult.page || 'следующей'}. Повторите поиск.`);
+        if (refreshActive) touchRefreshState();
+        completeSearch({
+          button,
+          status,
+          statusText: `Ошибка загрузки page ${advanceResult.page || 'следующей'}. Повторите поиск.`
+        });
         return;
       }
 
       if (advanceResult.status === 'end') {
-        searching = false;
-        button.textContent = 'Найти и листать';
-        saveNotFoundPosition(activeTargetGame);
-        status.textContent =
-          `Не найдено: список загружен полностью.\n` +
-          `Пролистано игр: ${getLoadedGamesCount()}`;
-        if (refreshActive) {
-          setTimeout(() => {
-            advanceRefreshFlow({
-              status: 'not-found',
-              contextKey: getSearchContextKey(),
-              url: getCurrentSearchUrlKey()
-            });
-          }, 250);
-        }
+        const loadedGamesCount = getLoadedGamesCount();
+        const reachedResultLimit = loadedGamesCount >= MAX_SEARCH_RESULTS;
+        if (reachedResultLimit) saveLimitReachedPosition(activeTargetGame);
+        else saveNotFoundPosition(activeTargetGame);
+        completeSearch({
+          button,
+          status,
+          statusText:
+            (reachedResultLimit
+              ? `Остановлено: достигнут лимит ${MAX_SEARCH_RESULTS} игр.\n`
+              : 'Не найдено: список загружен полностью.\n') +
+            `Пролистано игр: ${loadedGamesCount}`,
+          refreshActive,
+          result: {
+            status: reachedResultLimit ? 'limit-reached' : 'not-found',
+            contextKey: getSearchContextKey(),
+            url: getCurrentSearchUrlKey()
+          }
+        });
         return;
       }
 
@@ -5164,6 +5224,7 @@
 
     lastLoadedPage = page;
     if (numItems > 0) lastNumItems = numItems;
+    if (searching) touchRefreshState();
     const status = document.querySelector('#tm-itch-status');
 
     if (status && searching && !pausedByHiddenTab) {
@@ -5754,7 +5815,7 @@
 
   function formatOverflowRank(loadedGamesCount) {
     const loaded = Number(loadedGamesCount || 0);
-    if (loaded >= 1000) return '>1000';
+    if (loaded >= MAX_SEARCH_RESULTS) return `>${MAX_SEARCH_RESULTS}`;
     if (loaded > 0) return '>' + loaded;
     return '-';
   }
@@ -8020,6 +8081,7 @@
 
     function sectionHtml(key, title, rows, options = {}) {
       const sectionUiState = getSummarySectionStateEntry(sectionState, key);
+      const hasRows = rows.length > 0;
       const autoCollapsed = rows.length < 4;
       const chartCollapsed = sectionUiState.touched
         ? !!sectionUiState.chartCollapsed
@@ -8027,11 +8089,13 @@
       const enabled = !!sectionUiState.enabled;
       const activeSeriesKey = getSectionSeriesMode(key);
       const sortedRows = sortRowsForSeries(rows, activeSeriesKey, !!options.useRowSeries);
-      const chartHtml = options.hideChart ? '' : renderSectionChartSkeleton(options.chartKey || key, visibleSeries, chartCollapsed);
+      const chartHtml = (!hasRows || options.hideChart || !enabled || !visibleSeries.length)
+        ? ''
+        : renderSectionChartSkeleton(options.chartKey || key, visibleSeries, chartCollapsed);
       const emptySeriesNote = (visibleSeries.length || options.useRowSeries)
         ? ''
         : `<div class="tm-stat-muted">Включите хотя бы один раздел выше, чтобы видеть аналитику и запускать обновление.</div>`;
-      const bodyHtml = enabled
+      const bodyHtml = enabled && hasRows
         ? `
           <div class="tm-stat-section-body">
             <div class="tm-stat-table-wrap">
@@ -8075,7 +8139,7 @@
               >
               <div class="tm-stat-section-title-copy">
                 <span class="tm-stat-section-title-text">${escapeHtml(title)}</span>
-                ${options.showSeriesSelector === false ? '' : buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
+                ${options.showSeriesSelector === false || !hasRows ? '' : buildSectionSeriesSelector(key, activeSeriesKey, enabled)}
               </div>
             </div>
           </div>
@@ -8102,12 +8166,20 @@
     }));
 
     const chartDataByKey = filterSections.reduce((acc, section) => {
-      acc[section.key] = getSectionToggleChartData(records, section.key, sectionRowsByKey[section.key].map(row => row.label));
+      const rows = sectionRowsByKey[section.key];
+      const sectionEnabled = getSummarySectionStateEntry(sectionState, section.key).enabled;
+      acc[section.key] = rows.length && sectionEnabled && visibleSeries.length
+        ? getSectionToggleChartData(records, section.key, rows.map(row => row.label))
+        : null;
       return acc;
     }, {
-      special: getSectionToggleChartData(records, 'special', specialRows.map(row => row.label)),
-      default: getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label)),
-      intersections: getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
+      special: null,
+      default: getSummarySectionStateEntry(sectionState, 'default').enabled && visibleSeries.length
+        ? getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label))
+        : null,
+      intersections: intersectionRows.length && getSummarySectionStateEntry(sectionState, 'intersections').enabled && visibleSeries.length
+        ? getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
+        : null
     });
 
     const seriesToggleHtml = ANALYTICS_SERIES.map(item => `
@@ -8817,6 +8889,29 @@
     }
   }
 
+  function isSummaryManagedMutationNode(node) {
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    if (!element?.matches) return false;
+
+    const selector = [
+      '#tm-itch-summary-stats',
+      '.tm-referrer-rank-badge',
+      '[data-tm-referrer-intersection]'
+    ].join(',');
+    return element.matches(selector) || !!element.closest(selector);
+  }
+
+  function hasExternalSummaryMutation(mutations) {
+    return mutations.some(mutation => {
+      if (isSummaryManagedMutationNode(mutation.target)) return false;
+      const changedNodes = [
+        ...mutation.addedNodes,
+        ...mutation.removedNodes
+      ];
+      return changedNodes.some(node => !isSummaryManagedMutationNode(node));
+    });
+  }
+
   transferredPayload = consumeTransferredMeta();
 
   if (stopForCloudflareChallenge()) return;
@@ -8865,7 +8960,8 @@
       createSummaryStatsWidget();
 
       let summaryReferrersTimer = null;
-      const summaryReferrersObserver = new MutationObserver(() => {
+      const summaryReferrersObserver = new MutationObserver(mutations => {
+        if (!hasExternalSummaryMutation(mutations)) return;
         clearTimeout(summaryReferrersTimer);
         summaryReferrersTimer = setTimeout(() => {
           createSummaryStatsWidget();
