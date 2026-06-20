@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.6
+// @version      6.4.8
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -1844,13 +1844,10 @@
       display: inline;
       margin: 0 0 0 8px;
       padding: 0;
+      color: #fff;
       font-weight: 800;
       vertical-align: middle;
       white-space: nowrap;
-    }
-
-    .tm-referrer-rank-badge:hover {
-      text-decoration: underline;
     }
 
     .tm-primary-button {
@@ -4367,7 +4364,6 @@
 
     if (parts.length >= 2) {
       const label = parts.map(part => part.label).join(' + ');
-      const intersectionUrls = buildIntersectionUrls(parts);
       const latestRecord = getLatestSummaryRankForGame(game, {
         section: 'intersections',
         label,
@@ -4378,15 +4374,12 @@
       if (latestRecord) {
         badges.push({
           text: formatStatCell(latestRecord),
-          title: `Последняя позиция пересечения: ${label}`,
-          href: series === 'new-and-popular'
-            ? intersectionUrls.newPopularUrl
-            : buildSeriesUrl(series, intersectionUrls.popularUrl)
+          title: `Последняя позиция пересечения: ${label}`
         });
       }
     }
 
-    return badges.filter(item => item.href && item.text);
+    return badges.filter(item => item.text);
   }
 
   function findDashboardTitleAnchor(row) {
@@ -8626,13 +8619,10 @@
         let insertAfter = link;
 
         rankBadges.forEach(item => {
-          const badge = document.createElement('a');
+          const badge = document.createElement('span');
           badge.className = 'tm-referrer-rank-badge';
           badge.textContent = item.text;
           badge.title = item.title;
-          badge.href = item.href;
-          badge.target = '_blank';
-          badge.rel = 'noopener noreferrer';
           badge.setAttribute('data-tm-referrer-rank', '1');
           insertAfter.insertAdjacentElement('afterend', badge);
           insertAfter = badge;
