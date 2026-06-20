@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.9
+// @version      6.4.10
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -175,6 +175,7 @@
   let refreshAutostarted = false;
   let transferredPayload = null;
   let summaryReminderShown = false;
+  let summaryTableOpened = false;
   let lastLoadedPage = null;
   let lastNumItems = DEFAULT_PAGE_SIZE;
   let searchPageRequestSequence = 0;
@@ -1063,6 +1064,10 @@
       color: rgba(255,255,255,.52);
     }
 
+    .tm-referrer-rank-badge.tm-stat-stale-current {
+      color: rgba(255,255,255,.52);
+    }
+
     .tm-stat-stale-marker {
       display: inline-flex;
       vertical-align: -2px;
@@ -1319,6 +1324,27 @@
     .tm-summary-main {
       width: 100%;
       min-width: 0;
+    }
+
+    .tm-summary-open-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 18px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 14px;
+      background: rgba(255,255,255,.03);
+    }
+
+    .tm-summary-open-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: rgba(255,255,255,.92);
+    }
+
+    .tm-summary-open-card .tm-small-button {
+      width: fit-content;
+      margin: 0;
     }
 
     .tm-summary-sidepanel {
@@ -4343,7 +4369,7 @@
 
   function getLatestRankRecord(records) {
     return (Array.isArray(records) ? records : []).reduce((latest, record) => {
-      if (!record || (!isFiniteRankRecord(record) && !isTrueOverflowRecord(record))) return latest;
+      if (!record || (!isFiniteRankRecord(record) && !isTrueOverflowRecord(record) && !record.notFound)) return latest;
       if (!latest) return record;
       return Number(record?.foundAt || 0) >= Number(latest?.foundAt || 0) ? record : latest;
     }, null);
@@ -4385,7 +4411,8 @@
       if (latestRecord) {
         badges.push({
           text: formatStatCell(latestRecord),
-          title: `Последняя позиция пересечения: ${label}`
+          title: `Последняя позиция пересечения: ${label}`,
+          stale: !isRecordFromToday(latestRecord)
         });
       }
     }
@@ -7779,6 +7806,8 @@
   function createSummaryStatsWidget() {
     const game = findGameForCurrentSummaryPage();
     const summaryData = getSummaryData(game);
+    const pendingSummaryFocus = transferredPayload?.pendingSummaryFocus;
+    if (pendingSummaryFocus) summaryTableOpened = true;
     const {
       possibleKeys,
       records,
@@ -7801,6 +7830,7 @@
       .map(item => item.key)
       .filter(key => seriesState[key]);
     const selected = new Set();
+    const shouldRenderSummaryTable = summaryTableOpened;
     widget.id = 'tm-itch-summary-stats';
     widget.classList.add('tm-embedded');
 
@@ -7981,8 +8011,7 @@
     }
 
     function getSectionSeriesMode(sectionKey) {
-      const pendingFocus = transferredPayload?.pendingSummaryFocus;
-      const requestedSeries = String(pendingFocus?.section === sectionKey ? pendingFocus?.series || '' : '').trim();
+      const requestedSeries = String(pendingSummaryFocus?.section === sectionKey ? pendingSummaryFocus?.series || '' : '').trim();
       if (requestedSeries && visibleSeries.includes(requestedSeries)) {
         return requestedSeries;
       }
@@ -8148,39 +8177,49 @@
       `;
     }
 
-    const specialRows = SPECIAL_SUMMARY_ITEMS.map(item => buildFixedSeriesRow(
-      item.label,
-      item.section,
-      item.series,
-      item.url
-    ));
-    const defaultRows = [buildRow('Top', 'default', {
-      displayLabel: getSeriesLabel(getSectionSeriesMode('default')) || 'Top'
-    })];
-    const sectionRowsByKey = filterSections.reduce((acc, section) => {
-      acc[section.key] = buildRows(sectionsData?.[section.key]?.labels || [], section.key);
-      return acc;
-    }, {});
-    const intersectionRows = intersections.map(item => buildRow(item.label, 'intersections', {
-      id: item.id || ''
-    }));
+    const specialRows = shouldRenderSummaryTable
+      ? SPECIAL_SUMMARY_ITEMS.map(item => buildFixedSeriesRow(
+        item.label,
+        item.section,
+        item.series,
+        item.url
+      ))
+      : [];
+    const defaultRows = shouldRenderSummaryTable
+      ? [buildRow('Top', 'default', {
+        displayLabel: getSeriesLabel(getSectionSeriesMode('default')) || 'Top'
+      })]
+      : [];
+    const sectionRowsByKey = shouldRenderSummaryTable
+      ? filterSections.reduce((acc, section) => {
+        acc[section.key] = buildRows(sectionsData?.[section.key]?.labels || [], section.key);
+        return acc;
+      }, {})
+      : {};
+    const intersectionRows = shouldRenderSummaryTable
+      ? intersections.map(item => buildRow(item.label, 'intersections', {
+        id: item.id || ''
+      }))
+      : [];
 
-    const chartDataByKey = filterSections.reduce((acc, section) => {
-      const rows = sectionRowsByKey[section.key];
-      const sectionEnabled = getSummarySectionStateEntry(sectionState, section.key).enabled;
-      acc[section.key] = rows.length && sectionEnabled && visibleSeries.length
-        ? getSectionToggleChartData(records, section.key, rows.map(row => row.label))
-        : null;
-      return acc;
-    }, {
-      special: null,
-      default: getSummarySectionStateEntry(sectionState, 'default').enabled && visibleSeries.length
-        ? getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label))
-        : null,
-      intersections: intersectionRows.length && getSummarySectionStateEntry(sectionState, 'intersections').enabled && visibleSeries.length
-        ? getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
-        : null
-    });
+    const chartDataByKey = shouldRenderSummaryTable
+      ? filterSections.reduce((acc, section) => {
+        const rows = sectionRowsByKey[section.key];
+        const sectionEnabled = getSummarySectionStateEntry(sectionState, section.key).enabled;
+        acc[section.key] = rows.length && sectionEnabled && visibleSeries.length
+          ? getSectionToggleChartData(records, section.key, rows.map(row => row.label))
+          : null;
+        return acc;
+      }, {
+        special: null,
+        default: getSummarySectionStateEntry(sectionState, 'default').enabled && visibleSeries.length
+          ? getSectionToggleChartData(records, 'default', defaultRows.map(row => row.label))
+          : null,
+        intersections: intersectionRows.length && getSummarySectionStateEntry(sectionState, 'intersections').enabled && visibleSeries.length
+          ? getSectionToggleChartData(records, 'intersections', intersectionRows.map(row => row.label))
+          : null
+      })
+      : {};
 
     const seriesToggleHtml = ANALYTICS_SERIES.map(item => `
       <label class="tm-series-toggle">
@@ -8189,7 +8228,7 @@
       </label>
     `).join('');
 
-    const filterSectionsHtml = filterSections.map(section => {
+    const filterSectionsHtml = shouldRenderSummaryTable ? filterSections.map(section => {
       function getSelectMeta(row) {
         const normalizedLabel = normalize(row.label);
         if (section.selection === 'single') {
@@ -8223,7 +8262,7 @@
         selectable: true,
         getSelectMeta
       });
-    }).join('');
+    }).join('') : '';
 
     const sidePanelHtml = `
       <aside class="tm-summary-sidepanel">
@@ -8272,6 +8311,33 @@
       </aside>
     `;
 
+    const summaryMainHtml = shouldRenderSummaryTable
+      ? `
+        ${sectionHtml('special', 'Отдельные разделы', specialRows, {
+          useRowSeries: true,
+          hideChart: true,
+          showSeriesSelector: false
+        })}
+        ${sectionHtml('default', 'Общее', defaultRows)}
+        ${filterSectionsHtml}
+        ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
+          allowDelete: true
+        })}
+
+        ${!records.length ? `
+          <div class="tm-stat-muted">
+            Для этой игры пока нет сохранённых позиций.
+          </div>
+        ` : ''}
+      `
+      : `
+        <div class="tm-summary-open-card">
+          <div class="tm-summary-open-title">Таблица аналитики скрыта</div>
+          <div class="tm-stat-muted">Боковая панель уже доступна. Открой таблицу только когда она действительно нужна.</div>
+          <button class="tm-small-button tm-secondary-button" id="tm-open-summary-table" type="button">Открыть таблицу аналитики</button>
+        </div>
+      `;
+
     widget.innerHTML = `
       <div class="tm-widget-head">
         <div class="tm-widget-title">Summary Stats</div>
@@ -8281,22 +8347,7 @@
         <div class="tm-summary-shell">
           ${sidePanelHtml}
           <div class="tm-summary-main">
-            ${sectionHtml('special', 'Отдельные разделы', specialRows, {
-              useRowSeries: true,
-              hideChart: true,
-              showSeriesSelector: false
-            })}
-            ${sectionHtml('default', 'Общее', defaultRows)}
-            ${filterSectionsHtml}
-            ${sectionHtml('intersections', 'Пересечения', intersectionRows, {
-              allowDelete: true
-            })}
-
-            ${!records.length ? `
-              <div class="tm-stat-muted">
-                Для этой игры пока нет сохранённых позиций.
-              </div>
-            ` : ''}
+            ${summaryMainHtml}
           </div>
         </div>
       </div>
@@ -8332,6 +8383,12 @@
 
     setSummaryCollapsed(localStorage.getItem(STORAGE_KEY_SUMMARY_COLLAPSED) === '1', false);
 
+    const openSummaryTableButton = widget.querySelector('#tm-open-summary-table');
+    openSummaryTableButton?.addEventListener('click', () => {
+      summaryTableOpened = true;
+      createSummaryStatsWidget();
+    });
+
     widget.querySelectorAll('[data-chart-root]').forEach(root => {
       const chartKey = root.getAttribute('data-chart-root');
       const chartData = chartDataByKey[chartKey];
@@ -8361,6 +8418,7 @@
         button.addEventListener('click', () => {
           const nextDuration = Number(button.getAttribute('data-chart-duration')) || currentDuration;
           currentDuration = nextDuration;
+          if (currentDuration === 1) currentScaleMode = 'fixed';
           setSummaryChartPref(chartKey, {
             mode: currentMode,
             duration: currentDuration,
@@ -8370,6 +8428,10 @@
           });
           root.querySelectorAll('[data-chart-duration]').forEach(other => {
             other.classList.toggle('tm-active', other === button);
+          });
+          root.querySelectorAll('[data-chart-scale]').forEach(other => {
+            const buttonScaleMode = normalizeSummaryChartScaleMode(other.getAttribute('data-chart-scale'));
+            other.classList.toggle('tm-active', buttonScaleMode === currentScaleMode);
           });
           try {
             renderSectionToggleChartInto(root, chartData, currentMode, currentDuration, currentScaleMode);
@@ -8692,8 +8754,8 @@
 
         rankBadges.forEach(item => {
           const badge = document.createElement('span');
-          badge.className = 'tm-referrer-rank-badge';
-          badge.textContent = item.text;
+          badge.className = `tm-referrer-rank-badge${item.stale ? ' tm-stat-stale-current' : ''}`;
+          badge.innerHTML = `${escapeHtml(item.text)}${item.stale ? renderStaleRankMarker() : ''}`;
           badge.title = item.title;
           badge.setAttribute('data-tm-referrer-rank', '1');
           insertAfter.insertAdjacentElement('afterend', badge);
@@ -8842,7 +8904,6 @@
       createSummaryStatsWidget();
     });
 
-    const pendingSummaryFocus = transferredPayload?.pendingSummaryFocus;
     const pendingSummaryWidget = !!transferredPayload?.pendingSummaryWidget;
     if (pendingSummaryWidget) {
       transferredPayload.pendingSummaryWidget = false;
