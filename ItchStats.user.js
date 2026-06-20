@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         itch.io stats
 // @namespace    https://itch.io/
-// @version      6.4.4
+// @version      6.4.6
 // @description  Ищет свои игры в списках itch.io, сохраняет позиции, показывает статистику и пассивно подсвечивает найденные игры
 // @match        https://itch.io/*
 // @match        https://*.itch.io/*
@@ -18,14 +18,12 @@
 (function () {
   'use strict';
 
-  const SCROLL_INTERVAL = 170;
   const SCROLL_STEP = 1180;
   const SCROLL_BURST_STEP_FACTOR = 1.18;
   const SCROLL_BURST_COUNT = 4;
   const SCROLL_BURST_PAUSE = 85;
   const DEFAULT_PAGE_SIZE = 36;
   const MAX_SEARCH_PAGE = 30;
-  const SEARCH_PROGRESS_STALE_MS = 18000;
   const SEARCH_SERIES = [
     { key: 'popular', label: 'Popular', pathPart: '' },
     { key: 'new-and-popular', label: 'New & Popular', pathPart: 'new-and-popular' },
@@ -178,14 +176,16 @@
   let summaryReminderShown = false;
   let lastLoadedPage = null;
   let lastNumItems = DEFAULT_PAGE_SIZE;
-  let lastSearchProgressAt = 0;
-  let lastSearchProgressSnapshot = null;
+  let searchPageRequestSequence = 0;
+  let lastSearchPageRequestResult = null;
+  let pendingSearchWaitCancel = null;
   let dashboardGames = [];
 
   const passiveHighlighted = new WeakSet();
   const confettiPlayed = new WeakSet();
   const tiltInstalled = new WeakSet();
   const foundInfoByCard = new WeakMap();
+  const searchPageRequestListeners = new Set();
 
   const path = location.pathname;
   const isGamesPage = path === '/games' || path.startsWith('/games/');
@@ -1841,29 +1841,16 @@
     }
 
     .tm-referrer-rank-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 56px;
+      display: inline;
       margin: 0 0 0 8px;
-      padding: 4px 9px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #2e5665, #182f39);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 6px 14px rgba(0,0,0,.18);
-      color: #fff !important;
-      font-size: 12px;
-      line-height: 1.2;
+      padding: 0;
       font-weight: 800;
-      letter-spacing: -.02em;
-      text-decoration: none !important;
       vertical-align: middle;
       white-space: nowrap;
     }
 
     .tm-referrer-rank-badge:hover {
-      color: #fff !important;
-      filter: brightness(1.08);
-      text-decoration: none !important;
+      text-decoration: underline;
     }
 
     .tm-primary-button {
@@ -3367,6 +3354,7 @@
 
     searching = false;
     pausedByHiddenTab = false;
+    cancelPendingSearchWait();
     abortRefreshFlow('cloudflare challenge detected');
     showCloudflareDisableWarning();
 
@@ -4295,15 +4283,13 @@
         fastScroll: true,
         tailStep: Math.max(window.innerHeight, SCROLL_STEP),
         extraTailStep: Math.max(SCROLL_STEP, Math.round(window.innerHeight * 0.9)),
-        jumpPauseMs: 80,
-        pageAdvanceTimeoutMs: 12000
+        jumpPauseMs: 80
       }
       : {
         fastScroll: false,
         tailStep: Math.max(Math.round(window.innerHeight * 0.72), Math.round(SCROLL_STEP * 0.55)),
         extraTailStep: Math.max(Math.round(window.innerHeight * 0.45), Math.round(SCROLL_STEP * 0.38)),
-        jumpPauseMs: 220,
-        pageAdvanceTimeoutMs: 12000
+        jumpPauseMs: 220
       };
   }
 
@@ -4391,7 +4377,7 @@
 
       if (latestRecord) {
         badges.push({
-          text: `INT ${formatStatCell(latestRecord)}`,
+          text: formatStatCell(latestRecord),
           title: `Последняя позиция пересечения: ${label}`,
           href: series === 'new-and-popular'
             ? intersectionUrls.newPopularUrl
@@ -4399,28 +4385,6 @@
         });
       }
     }
-
-    const seenTags = new Set();
-    parts
-      .filter(part => part.type === 'tag')
-      .forEach(part => {
-        const tagKey = normalize(part.label);
-        if (!tagKey || seenTags.has(tagKey)) return;
-        seenTags.add(tagKey);
-
-        const latestRecord = getLatestSummaryRankForGame(game, {
-          section: 'tags',
-          label: part.label,
-          series
-        });
-        if (!latestRecord) return;
-
-        badges.push({
-          text: `TAG ${formatStatCell(latestRecord)}`,
-          title: `Последняя позиция тега: ${part.label}`,
-          href: buildSeriesUrl(series, part.href)
-        });
-      });
 
     return badges.filter(item => item.href && item.text);
   }
@@ -4605,76 +4569,109 @@
     return true;
   }
 
-  function isNearDocumentBottom(thresholdPx = 32) {
-    const scrollTop = Number(window.scrollY || window.pageYOffset || 0);
-    const viewportBottom = scrollTop + Number(window.innerHeight || 0);
-    const bodyHeight = Number(document.body?.scrollHeight || 0);
-    const rootHeight = Number(document.documentElement?.scrollHeight || 0);
-    const documentHeight = Math.max(bodyHeight, rootHeight);
-
-    if (documentHeight <= 0) return false;
-    return viewportBottom >= documentHeight - Math.max(0, Number(thresholdPx || 0));
+  function cancelPendingSearchWait() {
+    pendingSearchWaitCancel?.();
   }
 
-  async function waitForSearchResultsAdvance(snapshot, status = null, options = {}) {
-    let startedAt = Date.now();
-    const timeoutMs = Number(options.timeoutMs || 0) > 0 ? Number(options.timeoutMs) : 8000;
+  function publishSearchPageRequestResult(result) {
+    lastSearchPageRequestResult = result;
+    searchPageRequestListeners.forEach(listener => listener(result));
+  }
+
+  function waitForSearchPageRequest(afterSequence) {
+    return new Promise(resolve => {
+      let settled = false;
+
+      const finish = result => {
+        if (settled) return;
+        settled = true;
+        searchPageRequestListeners.delete(onResult);
+        if (pendingSearchWaitCancel === cancel) pendingSearchWaitCancel = null;
+        resolve(result);
+      };
+      const onResult = result => {
+        if (Number(result?.sequence || 0) > afterSequence) finish(result);
+      };
+      const cancel = () => finish({ status: 'cancelled' });
+
+      pendingSearchWaitCancel = cancel;
+      searchPageRequestListeners.add(onResult);
+
+      if (Number(lastSearchPageRequestResult?.sequence || 0) > afterSequence) {
+        finish(lastSearchPageRequestResult);
+      } else if (!searching) {
+        cancel();
+      }
+    });
+  }
+
+  function waitForSearchDom(predicate) {
+    return new Promise(resolve => {
+      let settled = false;
+      const observer = new MutationObserver(check);
+
+      function finish(status) {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        if (pendingSearchWaitCancel === cancel) pendingSearchWaitCancel = null;
+        resolve(status);
+      }
+
+      function check() {
+        if (predicate()) finish('ready');
+      }
+
+      const cancel = () => finish('cancelled');
+      pendingSearchWaitCancel = cancel;
+
+      if (predicate()) {
+        finish('ready');
+        return;
+      }
+      if (!searching) {
+        cancel();
+        return;
+      }
+
+      observer.observe(document.body, { childList: true, subtree: true });
+      check();
+    });
+  }
+
+  async function waitForSearchResultsAdvance(snapshot, status = null) {
     const initialPage = Number(snapshot?.page || 0);
     const initialLoaded = Number(snapshot?.loaded || 0);
     const initialHeight = Number(snapshot?.height || 0);
+    const afterSequence = Number(snapshot?.requestSequence || 0);
 
-    while (Date.now() - startedAt < timeoutMs) {
-      if (!searching) return false;
-      if (stopForCloudflareChallenge(status)) return false;
-
-      if (document.hidden) {
-        pausedByHiddenTab = true;
-        if (status) {
-          setSearchStatus(status, [
-            'Пауза: вкладка скрыта.',
-            'Догрузка продолжится после возврата.'
-          ]);
-        }
-        await waitUntilVisible();
-        if (!searching) return false;
-        pausedByHiddenTab = false;
-        markSearchProgress();
-        startedAt = Date.now();
-        continue;
-      }
-
-      const currentPage = Number(lastLoadedPage || 0);
-      const currentLoaded = getLoadedGamesCount();
-      const currentHeight = document.body.scrollHeight;
-
-      if (
-        currentPage > initialPage ||
-        currentLoaded > initialLoaded ||
-        currentHeight > initialHeight
-      ) {
-        markSearchProgress({
-          page: currentPage,
-          loaded: currentLoaded,
-          height: currentHeight
-        });
-        await waitForSearchPageReady(status, 12000);
-        return true;
-      }
-
-      syncSearchProgressSnapshot();
-
-      if (status) {
-        const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
-        setSearchStatus(status, [
-          `Жду загрузку page ${nextPageHint}...`,
-          `Пролистано игр: ${currentLoaded}`
-        ]);
-      }
-
-      await sleep(options.pollMs || 120);
+    if (snapshot?.hasGridLoader === false) {
+      return { status: 'end', page: initialPage, numItems: 0 };
     }
 
-    return false;
+    if (status) {
+      const nextPageHint = initialPage > 0 ? `${Math.min(initialPage + 1, MAX_SEARCH_PAGE)}` : 'следующей';
+      setSearchStatus(status, [
+        `Жду загрузку page ${nextPageHint}...`,
+        `Пролистано игр: ${initialLoaded}`
+      ]);
+    }
+
+    const requestResult = await waitForSearchPageRequest(afterSequence);
+    if (requestResult.status !== 'loaded' && requestResult.status !== 'end') return requestResult;
+
+    if (requestResult.status === 'end') {
+      const domStatus = await waitForSearchDom(() => !document.querySelector('.grid_loader'));
+      return domStatus === 'ready' ? requestResult : { status: 'cancelled' };
+    }
+
+    const domStatus = await waitForSearchDom(() => (
+      getLoadedGamesCount() > initialLoaded ||
+      Number(document.body?.scrollHeight || 0) > initialHeight
+    ));
+    if (domStatus !== 'ready') return { status: 'cancelled' };
+
+    return requestResult;
   }
 
   async function waitForSearchPageReady(status = null, timeoutMs = 90000) {
@@ -4698,7 +4695,6 @@
         if (!searching) return false;
         pausedByHiddenTab = false;
         startedAt = Date.now();
-        markSearchProgress();
         continue;
       }
 
@@ -4811,29 +4807,10 @@
     return {
       page: Number(lastLoadedPage || 0),
       loaded: getLoadedGamesCount(),
-      height: document.body?.scrollHeight || 0
+      height: document.body?.scrollHeight || 0,
+      requestSequence: searchPageRequestSequence,
+      hasGridLoader: !!document.querySelector('.grid_loader')
     };
-  }
-
-  function markSearchProgress(snapshot = null) {
-    lastSearchProgressAt = Date.now();
-    lastSearchProgressSnapshot = snapshot || captureSearchProgressSnapshot();
-  }
-
-  function syncSearchProgressSnapshot() {
-    const snapshot = captureSearchProgressSnapshot();
-
-    if (
-      !lastSearchProgressSnapshot ||
-      snapshot.page !== Number(lastSearchProgressSnapshot.page || 0) ||
-      snapshot.loaded !== Number(lastSearchProgressSnapshot.loaded || 0) ||
-      snapshot.height !== Number(lastSearchProgressSnapshot.height || 0)
-    ) {
-      markSearchProgress(snapshot);
-      return true;
-    }
-
-    return false;
   }
 
   function passiveScanOwnGames() {
@@ -4870,7 +4847,6 @@
 
     searching = true;
     pausedByHiddenTab = false;
-    markSearchProgress();
 
     button.textContent = 'Остановить';
     updateStatusScrolling();
@@ -4889,12 +4865,6 @@
     if (!initiallyFound) {
       await jumpToLastLoadedGame(activeTargetGame, status, searchMode);
     }
-
-    let lastScrollY = -1;
-    let lastScrollHeight = -1;
-    let lastLoadedCount = -1;
-    let lastKnownPage = Number(lastLoadedPage || 0);
-    let stuckCount = 0;
 
     while (searching) {
       if (isCloudflareChallengePage()) {
@@ -4975,94 +4945,25 @@
         return;
       }
 
-      const beforeY = window.scrollY;
-      const beforeHeight = document.body.scrollHeight;
-      const beforeLoaded = getLoadedGamesCount();
-      const beforePage = Number(lastLoadedPage || 0);
+      const before = captureSearchProgressSnapshot();
 
       await jumpToCurrentListTail(status, searchMode);
 
-      const advanced = await waitForSearchResultsAdvance({
-        page: beforePage,
-        loaded: beforeLoaded,
-        height: beforeHeight
-      }, status, {
-        timeoutMs: searchMode.pageAdvanceTimeoutMs,
-        pollMs: refreshActive ? 120 : 160
-      });
+      const advanceResult = await waitForSearchResultsAdvance(before, status);
 
-      const afterY = window.scrollY;
-      const afterHeight = document.body.scrollHeight;
-      const afterLoaded = getLoadedGamesCount();
-      const afterPage = Number(lastLoadedPage || 0);
-      const reachedDocumentEnd = isNearDocumentBottom();
-      const noListGrowth =
-        afterHeight === beforeHeight &&
-        afterLoaded === beforeLoaded &&
-        afterPage === beforePage;
-      const changedDuringBurst =
-        afterY !== beforeY ||
-        afterHeight !== beforeHeight ||
-        afterLoaded !== beforeLoaded ||
-        afterPage !== beforePage;
+      if (advanceResult.status === 'cancelled') break;
 
-      if (!advanced) {
-        if (noListGrowth && reachedDocumentEnd) {
-          searching = false;
-          button.textContent = 'Найти и листать';
-          saveNotFoundPosition(activeTargetGame);
-          status.textContent =
-            `Не найдено: список загружен полностью.\n` +
-            `Пролистано игр: ${afterLoaded}`;
-          if (refreshActive) {
-            setTimeout(() => {
-              advanceRefreshFlow({
-                status: 'not-found',
-                contextKey: getSearchContextKey(),
-                url: getCurrentSearchUrlKey()
-              });
-            }, 250);
-          }
-          return;
-        }
-
-        await sleep(refreshActive ? SCROLL_INTERVAL : 260);
+      if (advanceResult.status === 'error') {
+        stopSearch(`Ошибка загрузки page ${advanceResult.page || 'следующей'}. Повторите поиск.`);
+        return;
       }
 
-      if (!searching) break;
-      if (stopForCloudflareChallenge(status)) return;
-
-      passiveScanOwnGames();
-      updateStatusScrolling();
-      syncSearchProgressSnapshot();
-
-      const currentY = window.scrollY;
-      const currentHeight = document.body.scrollHeight;
-      const currentLoaded = getLoadedGamesCount();
-      const currentKnownPage = Number(lastLoadedPage || 0);
-      const progressWentStale = Date.now() - lastSearchProgressAt >= SEARCH_PROGRESS_STALE_MS;
-
-      if (
-        !changedDuringBurst &&
-        currentY === lastScrollY &&
-        currentHeight === lastScrollHeight &&
-        currentLoaded === lastLoadedCount &&
-        currentKnownPage === lastKnownPage &&
-        progressWentStale
-      ) stuckCount++;
-      else stuckCount = 0;
-
-      lastScrollY = currentY;
-      lastScrollHeight = currentHeight;
-      lastLoadedCount = currentLoaded;
-      lastKnownPage = currentKnownPage;
-
-      if (stuckCount >= 6) {
+      if (advanceResult.status === 'end') {
         searching = false;
         button.textContent = 'Найти и листать';
         saveNotFoundPosition(activeTargetGame);
         status.textContent =
-          `Не найдено до конца страницы.\n` +
+          `Не найдено: список загружен полностью.\n` +
           `Пролистано игр: ${getLoadedGamesCount()}`;
         if (refreshActive) {
           setTimeout(() => {
@@ -5075,6 +4976,12 @@
         }
         return;
       }
+
+      if (!searching) break;
+      if (stopForCloudflareChallenge(status)) return;
+
+      passiveScanOwnGames();
+      updateStatusScrolling();
     }
 
     if (button) button.textContent = 'Найти и листать';
@@ -5105,6 +5012,7 @@
   function stopSearch(reason = 'Остановлено') {
     searching = false;
     pausedByHiddenTab = false;
+    cancelPendingSearchWait();
     clearRefreshState();
 
     const button = document.querySelector('#tm-itch-search');
@@ -5208,48 +5116,120 @@
     }, 250);
   }
 
-  function parseAjaxResponse(data) {
-    if (!data || typeof data !== 'object') return;
+  function getSearchPageRequestInfo(input) {
+    if (!isGamesPage) return null;
 
-    if ('page' in data && 'num_items' in data && 'content' in data) {
-      lastLoadedPage = Number(data.page);
-      lastNumItems = Number(data.num_items) || DEFAULT_PAGE_SIZE;
-      markSearchProgress({
-        page: lastLoadedPage,
-        loaded: getLoadedGamesCount(),
-        height: document.body?.scrollHeight || 0
-      });
+    const rawUrl = typeof input === 'string' ? input : input?.url;
+    if (!rawUrl) return null;
 
-      const status = document.querySelector('#tm-itch-status');
+    try {
+      const url = new URL(rawUrl, location.href);
+      const page = Number(url.searchParams.get('page') || 0);
+      if (
+        url.origin !== location.origin ||
+        !url.pathname.startsWith('/games') ||
+        url.searchParams.get('format') !== 'json' ||
+        page <= 0
+      ) return null;
 
-      if (status && searching && !pausedByHiddenTab) {
-        setSearchStatus(status, [
-          `Загружена page ${lastLoadedPage}/${MAX_SEARCH_PAGE}`,
-          `Пролистано игр: ${getLoadedGamesCount()}`
-        ]);
-      }
-
-      setTimeout(() => {
-        installTiltForVisibleCards();
-        passiveScanOwnGames();
-      }, 80);
+      return { sequence: ++searchPageRequestSequence, page };
+    } catch (_) {
+      return null;
     }
+  }
+
+  function publishSearchPageRequestError(request, error) {
+    if (!request) return;
+    publishSearchPageRequestResult({
+      status: 'error',
+      sequence: request.sequence,
+      page: request.page,
+      error
+    });
+  }
+
+  function parseAjaxResponse(data, request = null) {
+    const isSearchPageResponse = !!(
+      data &&
+      typeof data === 'object' &&
+      'page' in data &&
+      'num_items' in data &&
+      'content' in data
+    );
+
+    if (!isSearchPageResponse) {
+      if (request) publishSearchPageRequestError(request, new Error('Invalid search page response'));
+      return false;
+    }
+
+    const page = Number(data.page);
+    const numItems = Number(data.num_items);
+    if (!Number.isFinite(page) || !Number.isFinite(numItems) || numItems < 0) {
+      if (request) publishSearchPageRequestError(request, new Error('Invalid search page metadata'));
+      return false;
+    }
+
+    lastLoadedPage = page;
+    if (numItems > 0) lastNumItems = numItems;
+    const status = document.querySelector('#tm-itch-status');
+
+    if (status && searching && !pausedByHiddenTab) {
+      setSearchStatus(status, [
+        `Загружена page ${lastLoadedPage}/${MAX_SEARCH_PAGE}`,
+        `Пролистано игр: ${getLoadedGamesCount()}`
+      ]);
+    }
+
+    setTimeout(() => {
+      installTiltForVisibleCards();
+      passiveScanOwnGames();
+    }, 80);
+
+    if (request) {
+      publishSearchPageRequestResult({
+        status: numItems === 0 ? 'end' : 'loaded',
+        sequence: request.sequence,
+        page: lastLoadedPage,
+        numItems
+      });
+    }
+
+    return true;
   }
 
   function installAjaxObserver() {
     const originalFetch = window.fetch;
 
     window.fetch = async function (...args) {
-      const response = await originalFetch.apply(this, args);
+      const request = getSearchPageRequestInfo(args[0]);
+      let response;
+
+      try {
+        response = await originalFetch.apply(this, args);
+      } catch (error) {
+        publishSearchPageRequestError(request, error);
+        throw error;
+      }
+
+      if (request && !response.ok) {
+        publishSearchPageRequestError(request, new Error(`HTTP ${response.status}`));
+        return response;
+      }
 
       try {
         const clone = response.clone();
         const contentType = clone.headers.get('content-type') || '';
 
         if (contentType.includes('application/json')) {
-          clone.json().then(parseAjaxResponse).catch(() => {});
+          clone.json()
+            .then(data => parseAjaxResponse(data, request))
+            .catch(error => publishSearchPageRequestError(request, error));
+        } else if (request) {
+          publishSearchPageRequestError(request, new Error('Expected JSON response'));
         }
-      } catch (_) {}
+      } catch (error) {
+        publishSearchPageRequestError(request, error);
+      }
 
       return response;
     };
@@ -5259,18 +5239,43 @@
 
     XMLHttpRequest.prototype.open = function (method, url) {
       this.__tmUrl = url;
+      this.__tmSearchPageRequest = getSearchPageRequestInfo(url);
       return originalOpen.apply(this, arguments);
     };
 
     XMLHttpRequest.prototype.send = function () {
+      let settled = false;
+      const request = this.__tmSearchPageRequest;
+
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        publishSearchPageRequestError(request, error);
+      };
+
       this.addEventListener('load', function () {
+        if (settled) return;
         try {
+          if (this.status < 200 || this.status >= 300) {
+            fail(new Error(`HTTP ${this.status}`));
+            return;
+          }
+
           const contentType = this.getResponseHeader('content-type') || '';
           if (contentType.includes('application/json')) {
-            parseAjaxResponse(JSON.parse(this.responseText));
+            const data = JSON.parse(this.responseText);
+            settled = true;
+            parseAjaxResponse(data, request);
+          } else if (request) {
+            fail(new Error('Expected JSON response'));
           }
-        } catch (_) {}
+        } catch (error) {
+          fail(error);
+        }
       });
+      this.addEventListener('error', () => fail(new Error('Network request failed')));
+      this.addEventListener('abort', () => fail(new Error('Network request aborted')));
+      this.addEventListener('timeout', () => fail(new Error('Network request timed out')));
 
       return originalSend.apply(this, arguments);
     };
